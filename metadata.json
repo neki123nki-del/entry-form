@@ -1,0 +1,5 @@
+{
+  "name": "EduTrack Mobile",
+  "description": "A simple and visually appealing mobile app for daily student attendance and reporting, synced with Google Sheets.",
+  "requestFramePermissions": []
+}
