@@ -3,6 +3,7 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -207,8 +208,58 @@ async function startServer() {
   app.get('/api/config', (req, res) => {
     res.json({
       spreadsheetId: SPREADSHEET_ID,
-      isConfigured: !!(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY)
+      isConfigured: !!(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY && process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY.includes('PRIVATE KEY'))
     });
+  });
+
+  app.post('/api/scan', async (req, res) => {
+    const { base64Data, mimeType } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return res.status(400).json({ status: 'error', message: 'GEMINI_API_KEY is not configured on the server.' });
+    }
+
+    try {
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ 
+        model: 'gemini-1.5-flash',
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: SchemaType.ARRAY,
+            items: {
+              type: SchemaType.OBJECT,
+              properties: {
+                id: { type: SchemaType.STRING, description: 'The full student symbol' },
+                rollNo: { type: SchemaType.STRING, description: 'The last 3 digits of the symbol' },
+                name: { type: SchemaType.STRING },
+                faculty: { type: SchemaType.STRING },
+                batch: { type: SchemaType.STRING }
+              },
+              required: ['id', 'rollNo', 'name', 'faculty', 'batch']
+            }
+          }
+        }
+      });
+
+      const response = await model.generateContent([
+        { inlineData: { data: base64Data, mimeType } },
+        { text: 'Extract student details from this list image.\n\n' +
+                'RULES:\n' +
+                '1. Find the "Student Symbol" (e.g., "Tha-081-Bar-001" or "081-BAR-001").\n' +
+                '2. Extract the last 3 digits after the final hyphen (e.g., "001") as the "rollNo". If no hyphen, take the last 3 digits.\n' +
+                '3. Use the full "Student Symbol" as the "id".\n' +
+                '4. Extract "Name", "Faculty", and "Batch".\n\n' +
+                'Return as a JSON array of objects.' }
+      ]);
+
+      const extractedStudents = JSON.parse(response.response.text());
+      res.json(extractedStudents);
+    } catch (error: any) {
+      console.error('AI Scan error on server:', error.message);
+      res.status(500).json({ status: 'error', message: error.message });
+    }
   });
 
   app.post('/api/students/bulk', async (req, res) => {

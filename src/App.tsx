@@ -18,7 +18,6 @@ import {
   Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GoogleGenAI, Type } from "@google/genai";
 import { cn } from './lib/utils';
 import { Student, AttendanceStatus, AttendanceRecord } from './types';
 
@@ -32,8 +31,6 @@ export default function App() {
   const [scanning, setScanning] = useState(false);
   const [activeTab, setActiveTab] = useState<'lookup' | 'mass'>('lookup');
   const [massRollNos, setMassRollNos] = useState('');
-
-  const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' }), []);
 
   // Form State
   const [selectedFaculty, setSelectedFaculty] = useState<string>('');
@@ -160,40 +157,19 @@ export default function App() {
       const base64 = await base64Promise;
       const base64Data = base64.split(',')[1];
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: {
-          parts: [
-            { inlineData: { data: base64Data, mimeType: file.type } },
-            { text: 'Extract student details from this list image.\n\n' +
-                    'RULES:\n' +
-                    '1. Find the "Student Symbol" (e.g., "Tha-081-Bar-001" or "081-BAR-001").\n' +
-                    '2. Extract the last 3 digits after the final hyphen (e.g., "001") as the "rollNo". If no hyphen, take the last 3 digits.\n' +
-                    '3. Use the full "Student Symbol" as the "id".\n' +
-                    '4. Extract "Name", "Faculty", and "Batch".\n\n' +
-                    'Return as a JSON array of objects with keys: id, rollNo, name, faculty, batch.' }
-          ]
-        },
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                id: { type: Type.STRING, description: 'The full student symbol' },
-                rollNo: { type: Type.STRING, description: 'The last 3 digits of the symbol' },
-                name: { type: Type.STRING },
-                faculty: { type: Type.STRING },
-                batch: { type: Type.STRING }
-              },
-              required: ['id', 'rollNo', 'name', 'faculty', 'batch']
-            }
-          }
-        }
+      // Call server-side scan
+      const scanRes = await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64Data, mimeType: file.type })
       });
 
-      const extractedStudents = JSON.parse(response.text);
+      if (!scanRes.ok) {
+        const errData = await scanRes.json();
+        throw new Error(errData.message || 'AI Scan failed');
+      }
+
+      const extractedStudents = await scanRes.json();
       
       const syncRes = await fetch('/api/students/bulk', {
         method: 'POST',
