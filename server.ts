@@ -159,6 +159,51 @@ async function startServer() {
     }
   });
 
+  app.post('/api/attendance/bulk', async (req, res) => {
+    const { records } = req.body;
+    const sheets = await getSheetsClient();
+    
+    if (!sheets) {
+      console.log('DEMO MODE: Bulk attendance received:', records.length);
+      return res.json({ 
+        status: 'success', 
+        message: `${records.length} records processed (Demo Mode).` 
+      });
+    }
+
+    try {
+      const values = records.map((record: any) => [
+        record.date,
+        record.timestamp,
+        record.studentId,
+        record.studentName,
+        record.rollNo,
+        record.faculty,
+        record.batch,
+        record.status,
+        record.workSubmission.classwork ? 'Yes' : 'No',
+        record.workSubmission.classworkSubmission ? 'Yes' : 'No',
+        record.workSubmission.assignment ? 'Yes' : 'No',
+        record.notes || ''
+      ]);
+
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'Attendance!A2',
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values },
+      });
+
+      res.json({ 
+        status: 'success', 
+        message: `${records.length} records saved directly to Google Sheets!` 
+      });
+    } catch (error: any) {
+      console.error('Error in bulk attendance:', error.message);
+      res.status(500).json({ status: 'error', message: error.message });
+    }
+  });
+
   app.get('/api/config', (req, res) => {
     res.json({
       spreadsheetId: SPREADSHEET_ID,
