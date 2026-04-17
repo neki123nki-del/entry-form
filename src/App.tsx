@@ -12,7 +12,8 @@ import {
   FileText,
   ChevronDown,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
@@ -24,6 +25,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const [config, setConfig] = useState<{ spreadsheetId: string, isConfigured: boolean } | null>(null);
 
   // Form State
   const [selectedFaculty, setSelectedFaculty] = useState<string>('');
@@ -48,10 +50,21 @@ export default function App() {
   // Fetch students
   const fetchStudents = async () => {
     try {
-      const response = await fetch('/api/students');
-      if (!response.ok) throw new Error('Failed to fetch students');
-      const data = await response.json();
-      setStudents(data);
+      // Fetch both students and config in parallel
+      const [studentsRes, configRes] = await Promise.all([
+        fetch('/api/students'),
+        fetch('/api/config')
+      ]);
+
+      if (!studentsRes.ok) throw new Error('Failed to fetch students');
+      
+      const studentsData = await studentsRes.json();
+      setStudents(studentsData);
+
+      if (configRes.ok) {
+        const configData = await configRes.json();
+        setConfig(configData);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -143,6 +156,17 @@ export default function App() {
             <h1 className="text-xl font-bold tracking-tight text-slate-800">EduTrack</h1>
           </div>
           <div className="flex items-center gap-3">
+            {config && (
+              <a 
+                href={`https://docs.google.com/spreadsheets/d/${config.spreadsheetId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                title="Open Google Sheet"
+              >
+                <ExternalLink className="w-5 h-5" />
+              </a>
+            )}
             <div className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-1 rounded">
               {new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
             </div>
@@ -151,6 +175,19 @@ export default function App() {
       </header>
 
       <main className="max-w-md mx-auto px-6 pt-6 space-y-6">
+        {/* Config Alert */}
+        {config && !config.isConfigured && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <h4 className="text-sm font-bold text-amber-900">Direct Link Not Configured</h4>
+              <p className="text-xs text-amber-800 leading-relaxed">
+                App is running in <strong>Demo Mode</strong>. To save to Google Sheets, add your Service Account credentials in <strong>Settings &gt; Secrets</strong>.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Selection Section */}
         <section className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 space-y-4">
           <div className="grid grid-cols-2 gap-4">
