@@ -7,25 +7,7 @@ dotenv.config();
 const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_SPREADSHEET_ID || '1Z2nIYNvdPD-mXECDPMnvJ7s_4s1nkTL2y8umZvc6caY';
 
 export const getSheetsClient = async () => {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  let key = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
-
-  if (!email || !key) return null;
-
-  try {
-    key = key.replace(/\\n/g, '\n').replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
-    if (!key.includes('PRIVATE KEY')) return null;
-
-    const auth = new google.auth.JWT({
-      email,
-      key,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets']
-    });
-    return google.sheets({ version: 'v4', auth });
-  } catch (error) {
-    console.error('Error creating Google Sheets client:', error);
-    return null;
-  }
+  return null;
 };
 
 export const fetchStudentsFromSheet = async (): Promise<Student[] | null> => {
@@ -114,6 +96,7 @@ export const bulkUpdateStudents = async (students: Student[]): Promise<void> => 
 };
 
 export const getSheetConfig = () => ({
-  spreadsheetId: SPREADSHEET_ID,
-  isConfigured: !!(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.includes('PRIVATE KEY'))
+  spreadsheetId: '',
+  isConfigured: false,
+  aiConfigured: false
 });

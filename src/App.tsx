@@ -271,22 +271,13 @@ export default function App() {
             </div>
             <div className="flex flex-col">
               <h1 className="text-xl font-bold tracking-tight text-slate-800 leading-none">EduTrack</h1>
-              <div className="flex items-center gap-1.5 mt-1">
-                <div className={cn(
-                  "flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider",
-                  config?.isConfigured 
-                    ? "bg-green-100 text-green-700" 
-                    : "bg-amber-100 text-amber-700"
-                )}>
-                  <div className={cn("w-1 h-1 rounded-full", config?.isConfigured ? "bg-green-500" : "bg-amber-500 animate-pulse")} />
-                  {config?.isConfigured ? 'Live' : 'Demo'}
-                </div>
-                {students.length > 0 && (
-                  <div className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider">
-                    {students.length} Students
+              {students.length > 0 && (
+                <div className="mt-1">
+                  <div className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider inline-block">
+                    {students.length} Students Loaded
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -359,15 +350,6 @@ export default function App() {
                   <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                     <Users className="w-3.5 h-3.5" /> Student Lookup
                   </h3>
-                  <label className="text-xs font-bold text-blue-600 hover:text-blue-700 cursor-pointer flex items-center gap-1 bg-blue-50 px-2 py-1 rounded-lg transition-colors">
-                    {scanning ? (
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <Camera className="w-3 h-3" />
-                    )}
-                    {scanning ? 'Scanning...' : 'Scan List'}
-                    <input type="file" accept="image/*" className="hidden" onChange={handleImageScan} disabled={scanning} />
-                  </label>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
