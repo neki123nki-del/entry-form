@@ -73,29 +73,44 @@ async function startServer() {
     }
 
     try {
-      console.log('Fetching students from spreadsheet:', SPREADSHEET_ID);
+      console.log('Fetching students from spreadsheet:', SPREADSHEET_ID, 'Tab: Students');
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: 'Students!A2:E',
       });
 
       const rows = response.data.values;
-      if (!rows || rows.length === 0) {
-        console.log('No data found in spreadsheet. Returning mock students.');
+      
+      // If no rows at all, or only one row that looks like a header
+      if (!rows || rows.length === 0 || (rows.length === 1 && rows[0].includes('Name'))) {
+        console.log('No student data found (likely empty or only header). Returning mock students.');
         return res.json(mockStudents);
       }
 
-      const students = rows.map((row, index) => ({
-        id: row[0] || `S${index}`,
-        rollNo: row[1] || '',
-        name: row[2] || '',
-        faculty: row[3] || '',
-        batch: row[4] || '',
-      }));
+      const students = rows
+        .filter(row => row && row[0] && row[0] !== 'ID') // Skip empty rows or duplicate headers
+        .map((row, index) => ({
+          id: row[0] || `S${index}`,
+          rollNo: row[1] || '',
+          name: row[2] || '',
+          faculty: row[3] || '',
+          batch: row[4] || '',
+        }));
+
+      if (students.length === 0) {
+        console.log('Processed student list is empty. Returning mock students.');
+        return res.json(mockStudents);
+      }
 
       res.json(students);
     } catch (error: any) {
       console.error('Error fetching from sheets:', error.message);
+      // Detailed error logging for common issues
+      if (error.code === 403) {
+        console.error('Check if the sheet is shared with:', process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL);
+      } else if (error.code === 404) {
+        console.error('Check if spreadsheet ID is correct and "Students" tab exists.');
+      }
       res.json(mockStudents);
     }
   });

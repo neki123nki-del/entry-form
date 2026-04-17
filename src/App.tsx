@@ -46,10 +46,10 @@ export default function App() {
   const [teacherNotes, setTeacherNotes] = useState('');
 
   // Derived Data
-  const faculties = useMemo(() => Array.from(new Set(students.map(s => s.faculty))), [students]);
+  const faculties = useMemo(() => Array.from(new Set(students.map(s => s.faculty).filter(Boolean))), [students]);
   const batches = useMemo(() => {
     if (!selectedFaculty) return [];
-    return Array.from(new Set(students.filter(s => s.faculty === selectedFaculty).map(s => s.batch)));
+    return Array.from(new Set(students.filter(s => s.faculty === selectedFaculty).map(s => s.batch).filter(Boolean)));
   }, [students, selectedFaculty]);
 
   // Fetch students
@@ -269,7 +269,25 @@ export default function App() {
             <div className="bg-blue-600 p-2 rounded-lg">
               <GraduationCap className="w-6 h-6 text-white" />
             </div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-800">EduTrack</h1>
+            <div className="flex flex-col">
+              <h1 className="text-xl font-bold tracking-tight text-slate-800 leading-none">EduTrack</h1>
+              <div className="flex items-center gap-1.5 mt-1">
+                <div className={cn(
+                  "flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider",
+                  config?.isConfigured 
+                    ? "bg-green-100 text-green-700" 
+                    : "bg-amber-100 text-amber-700"
+                )}>
+                  <div className={cn("w-1 h-1 rounded-full", config?.isConfigured ? "bg-green-500" : "bg-amber-500 animate-pulse")} />
+                  {config?.isConfigured ? 'Live' : 'Demo'}
+                </div>
+                {students.length > 0 && (
+                  <div className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider">
+                    {students.length} Students
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             {config && (
