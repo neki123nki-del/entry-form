@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, 
   User, 
@@ -13,9 +13,12 @@ import {
   ChevronDown,
   Loader2,
   AlertCircle,
-  ExternalLink
+  ExternalLink,
+  Camera,
+  Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { GoogleGenAI, Type } from "@google/genai";
 import { cn } from './lib/utils';
 import { Student, AttendanceStatus, AttendanceRecord } from './types';
 
@@ -26,6 +29,9 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const [config, setConfig] = useState<{ spreadsheetId: string, isConfigured: boolean } | null>(null);
+  const [scanning, setScanning] = useState(false);
+
+  const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' }), []);
 
   // Form State
   const [selectedFaculty, setSelectedFaculty] = useState<string>('');
@@ -136,6 +142,78 @@ export default function App() {
     }
   };
 
+  const handleImageScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setScanning(true);
+    setSaveStatus(null);
+
+    try {
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+      const base64 = await base64Promise;
+      const base64Data = base64.split(',')[1];
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: {
+          parts: [
+            { inlineData: { data: base64Data, mimeType: file.type } },
+            { text: 'Extract student details from this list image.\n\n' +
+                    'RULES:\n' +
+                    '1. Find the "Student Symbol" (e.g., "Tha-081-Bar-001" or "081-BAR-001").\n' +
+                    '2. Extract the last 3 digits after the final hyphen (e.g., "001") as the "rollNo". If no hyphen, take the last 3 digits.\n' +
+                    '3. Use the full "Student Symbol" as the "id".\n' +
+                    '4. Extract "Name", "Faculty", and "Batch".\n\n' +
+                    'Return as a JSON array of objects with keys: id, rollNo, name, faculty, batch.' }
+          ]
+        },
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.STRING, description: 'The full student symbol' },
+                rollNo: { type: Type.STRING, description: 'The last 3 digits of the symbol' },
+                name: { type: Type.STRING },
+                faculty: { type: Type.STRING },
+                batch: { type: Type.STRING }
+              },
+              required: ['id', 'rollNo', 'name', 'faculty', 'batch']
+            }
+          }
+        }
+      });
+
+      const extractedStudents = JSON.parse(response.text);
+      
+      const syncRes = await fetch('/api/students/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ students: extractedStudents })
+      });
+
+      const result = await syncRes.json();
+      if (syncRes.ok) {
+        setSaveStatus({ type: 'success', message: result.message });
+        fetchStudents(); // Refresh the list
+      } else {
+        throw new Error(result.message);
+      }
+    } catch (err) {
+      console.error('Scan error:', err);
+      setSaveStatus({ type: 'error', message: err instanceof Error ? err.message : 'AI Scan failed' });
+    } finally {
+      setScanning(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -190,6 +268,21 @@ export default function App() {
 
         {/* Selection Section */}
         <section className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 space-y-4">
+          <div className="flex items-center justify-between pb-1 border-b border-slate-50">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+              <Users className="w-3.5 h-3.5" /> Student Lookup
+            </h3>
+            <label className="text-xs font-bold text-blue-600 hover:text-blue-700 cursor-pointer flex items-center gap-1 bg-blue-50 px-2 py-1 rounded-lg transition-colors">
+              {scanning ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Camera className="w-3 h-3" />
+              )}
+              {scanning ? 'Scanning...' : 'Scan List'}
+              <input type="file" accept="image/*" className="hidden" onChange={handleImageScan} disabled={scanning} />
+            </label>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">

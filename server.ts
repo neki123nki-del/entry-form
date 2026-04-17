@@ -166,6 +166,44 @@ async function startServer() {
     });
   });
 
+  app.post('/api/students/bulk', async (req, res) => {
+    const { students } = req.body;
+    const sheets = await getSheetsClient();
+
+    if (!sheets) {
+      return res.status(400).json({ status: 'error', message: 'Sheets not configured.' });
+    }
+
+    try {
+      const values = students.map((s: any) => [
+        s.id || `S${Math.random().toString(36).substr(2, 9)}`,
+        s.rollNo || '',
+        s.name || '',
+        s.faculty || '',
+        s.batch || ''
+      ]);
+
+      // Clear existing students (Sheet Students!A2:E)
+      await sheets.spreadsheets.values.clear({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'Students!A2:E',
+      });
+
+      // Update starting at A2
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'Students!A2',
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values },
+      });
+
+      res.json({ status: 'success', message: `${students.length} students synchronized to Google Sheets!` });
+    } catch (error: any) {
+      console.error('Error in bulk update:', error.message);
+      res.status(500).json({ status: 'error', message: error.message });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
