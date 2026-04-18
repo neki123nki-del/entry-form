@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, 
-  User, 
+  User as UserIcon, 
   Calendar, 
   CheckCircle2, 
   XCircle, 
@@ -15,13 +15,29 @@ import {
   AlertCircle,
   ExternalLink,
   Camera,
-  Upload
+  Upload,
+  LogOut,
+  LogIn
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import { Student, AttendanceStatus, AttendanceRecord } from './types';
+import { db, auth } from './lib/firebase';
+import { 
+  collection, 
+  onSnapshot, 
+  addDoc, 
+  serverTimestamp, 
+  doc, 
+  getDocFromServer,
+  query,
+  orderBy
+} from 'firebase/firestore';
+import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { GoogleGenAI, Type } from '@google/genai';
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,33 +68,52 @@ export default function App() {
     return Array.from(new Set(students.filter(s => s.faculty === selectedFaculty).map(s => s.batch).filter(Boolean)));
   }, [students, selectedFaculty]);
 
-  // Fetch students
-  const fetchStudents = async () => {
-    try {
-      // Fetch both students and config in parallel
-      const [studentsRes, configRes] = await Promise.all([
-        fetch('/api/students'),
-        fetch('/api/config')
-      ]);
-
-      if (!studentsRes.ok) throw new Error('Failed to fetch students');
-      
-      const studentsData = await studentsRes.json();
-      setStudents(studentsData);
-
-      if (configRes.ok) {
-        const configData = await configRes.json();
-        setConfig(configData);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Fetch data and handle auth
   useEffect(() => {
-    fetchStudents();
+    let unsubStudents: (() => void) | null = null;
+    let unsubConfig: (() => void) | null = null;
+
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      setUser(user);
+      
+      if (user) {
+        // Real-time students listener
+        unsubStudents = onSnapshot(collection(db, 'students'), (snapshot) => {
+          const studentsList = snapshot.docs.map(doc => ({ ...doc.data() } as Student));
+          setStudents(studentsList);
+        });
+
+        // Real-time config listener
+        unsubConfig = onSnapshot(doc(db, 'config', 'main'), (snapshot) => {
+          if (snapshot.exists()) {
+            setConfig(snapshot.data() as any);
+          }
+        });
+
+        // Test connection as required by security guidelines
+        const testConn = async () => {
+          try {
+            await getDocFromServer(doc(db, 'config', 'main'));
+          } catch (error) {
+            console.error("Firestore connectivity check failed:", error);
+          }
+        };
+        testConn();
+      } else {
+        // Clear data if logged out
+        setStudents([]);
+        setConfig(null);
+        if (unsubStudents) unsubStudents();
+        if (unsubConfig) unsubConfig();
+      }
+      setLoading(false);
+    });
+
+    return () => {
+      unsubAuth();
+      if (unsubStudents) unsubStudents();
+      if (unsubConfig) unsubConfig();
+    };
   }, []);
 
   // Search student when roll no, faculty, or batch changes
@@ -95,14 +130,25 @@ export default function App() {
     }
   }, [searchRollNo, selectedFaculty, selectedBatch, students]);
 
+  const handleLogin = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err) {
+      setError('Login failed. Please check your internet connection.');
+    }
+  };
+
+  const handleLogout = () => signOut(auth);
+
   const handleSave = async () => {
-    if (!selectedStudent) return;
+    if (!selectedStudent || !user) return;
 
     setSaving(true);
     setSaveStatus(null);
 
     const now = new Date();
-    const record: AttendanceRecord = {
+    const record: any = {
       studentId: selectedStudent.id,
       studentName: selectedStudent.name,
       rollNo: selectedStudent.rollNo,
@@ -112,30 +158,32 @@ export default function App() {
       workSubmission,
       notes: teacherNotes,
       date: now.toISOString().split('T')[0],
-      timestamp: now.toLocaleTimeString()
+      timestamp: now.toLocaleTimeString(),
+      teacherId: user.uid,
+      teacherEmail: user.email,
+      createdAt: serverTimestamp()
     };
 
     try {
-      const response = await fetch('/api/attendance', {
+      // Save local to Firestore for instant multi-device sync
+      await addDoc(collection(db, 'attendance'), record);
+
+      // Also bridge to Google Sheets via server
+      await fetch('/api/attendance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(record)
       });
 
-      const result = await response.json();
-      if (response.ok) {
-        setSaveStatus({ type: 'success', message: result.message || 'Attendance saved successfully!' });
-        // Reset form for next student
-        setSearchRollNo('');
-        setSelectedStudent(null);
-        setAttendanceStatus('present');
-        setWorkSubmission({ classwork: false, classworkSubmission: false, assignment: false });
-        setTeacherNotes('');
-      } else {
-        throw new Error(result.message || 'Failed to save attendance');
-      }
+      setSaveStatus({ type: 'success', message: 'Attendance saved and synced!' });
+      // Reset form
+      setSearchRollNo('');
+      setSelectedStudent(null);
+      setAttendanceStatus('present');
+      setWorkSubmission({ classwork: false, classworkSubmission: false, assignment: false });
+      setTeacherNotes('');
     } catch (err) {
-      setSaveStatus({ type: 'error', message: err instanceof Error ? err.message : 'Failed to save' });
+      setSaveStatus({ type: 'error', message: err instanceof Error ? err.message : 'Sync failed' });
     } finally {
       setSaving(false);
     }
@@ -143,33 +191,54 @@ export default function App() {
 
   const handleImageScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !user) return;
 
     setScanning(true);
     setSaveStatus(null);
 
     try {
+      const ggenAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      
       const reader = new FileReader();
       const base64Promise = new Promise<string>((resolve) => {
-        reader.onload = () => resolve(reader.result as string);
+        reader.onload = () => resolve((reader.result as string).split(',')[1]);
         reader.readAsDataURL(file);
       });
-      const base64 = await base64Promise;
-      const base64Data = base64.split(',')[1];
+      const base64Data = await base64Promise;
 
-      // Call server-side scan
-      const scanRes = await fetch('/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base64Data, mimeType: file.type })
+      const response = await ggenAI.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: {
+          parts: [
+            { inlineData: { data: base64Data, mimeType: file.type } },
+            { text: 'Extract student details from this list image.\n\n' +
+                    'RULES:\n' +
+                    '1. Find the "Student Symbol" (e.g., "Tha-081-Bar-001" or "081-BAR-001").\n' +
+                    '2. Extract the last 3 digits after the final hyphen (e.g., "001") as the "rollNo". If no hyphen, take the last 3 digits.\n' +
+                    '3. Use the full "Student Symbol" as the "id".\n' +
+                    '4. Extract "Name", "Faculty", and "Batch".' }
+          ]
+        },
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.STRING },
+                rollNo: { type: Type.STRING },
+                name: { type: Type.STRING },
+                faculty: { type: Type.STRING },
+                batch: { type: Type.STRING }
+              },
+              required: ['id', 'rollNo', 'name', 'faculty', 'batch']
+            }
+          }
+        }
       });
 
-      if (!scanRes.ok) {
-        const errData = await scanRes.json();
-        throw new Error(errData.message || 'AI Scan failed');
-      }
-
-      const extractedStudents = await scanRes.json();
+      const extractedStudents = JSON.parse(response.text);
       
       const syncRes = await fetch('/api/students/bulk', {
         method: 'POST',
@@ -177,12 +246,11 @@ export default function App() {
         body: JSON.stringify({ students: extractedStudents })
       });
 
-      const result = await syncRes.json();
       if (syncRes.ok) {
-        setSaveStatus({ type: 'success', message: result.message });
-        fetchStudents(); // Refresh the list
+        setSaveStatus({ type: 'success', message: 'AI Scan complete! Data syncing...' });
+        // The real-time listener will pick up the new students soon
       } else {
-        throw new Error(result.message);
+        throw new Error('Failed to update sheets');
       }
     } catch (err) {
       console.error('Scan error:', err);
@@ -193,7 +261,7 @@ export default function App() {
   };
 
   const handleMassSave = async () => {
-    if (!selectedFaculty || !selectedBatch || !massRollNos.trim()) return;
+    if (!selectedFaculty || !selectedBatch || !massRollNos.trim() || !user) return;
 
     setSaving(true);
     setSaveStatus(null);
@@ -208,7 +276,7 @@ export default function App() {
     }).filter(s => s) as Student[];
 
     if (matchedStudents.length === 0) {
-      setSaveStatus({ type: 'error', message: 'No matching students found for the entered roll numbers in the selected Faculty/Batch.' });
+      setSaveStatus({ type: 'error', message: 'No matching students found.' });
       setSaving(false);
       return;
     }
@@ -222,40 +290,56 @@ export default function App() {
       batch: student.batch,
       status: 'present' as AttendanceStatus,
       workSubmission: { classwork: false, classworkSubmission: false, assignment: false },
-      notes: 'Mass Attendance Update',
+      notes: 'Mass Update',
       date: now.toISOString().split('T')[0],
-      timestamp: now.toLocaleTimeString()
+      timestamp: now.toLocaleTimeString(),
+      teacherId: user.uid,
+      createdAt: serverTimestamp()
     }));
 
     try {
-      const response = await fetch('/api/attendance/bulk', {
+      // Parallel sync to Firestore and Sheets
+      const firestorePromises = records.map(r => addDoc(collection(db, 'attendance'), r));
+      const sheetsPromise = fetch('/api/attendance/bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ records })
       });
 
-      const result = await response.json();
-      if (response.ok) {
-        setSaveStatus({ 
-          type: 'success', 
-          message: `${records.length} students marked present successfully!` + 
-                   (matchedStudents.length < rollNoList.length ? ` (${rollNoList.length - matchedStudents.length} invalid roll nos skipped)` : '')
-        });
-        setMassRollNos('');
-      } else {
-        throw new Error(result.message);
-      }
+      await Promise.all([...firestorePromises, sheetsPromise]);
+
+      setSaveStatus({ type: 'success', message: `${records.length} marks synced locally and to Sheets!` });
+      setMassRollNos('');
     } catch (err) {
-      setSaveStatus({ type: 'error', message: err instanceof Error ? err.message : 'Failed to save attendance' });
+      setSaveStatus({ type: 'error', message: 'Sync failed' });
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) {
+  if (!user) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white rounded-3xl p-8 shadow-xl max-w-sm w-full text-center space-y-6 border border-slate-100"
+        >
+          <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-blue-200">
+            <GraduationCap className="w-10 h-10 text-white" />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-2xl font-bold text-slate-800">EduTrack Access</h1>
+            <p className="text-sm text-slate-500">Sign in to sync attendance across your devices and link with Google Sheets.</p>
+          </div>
+          <button
+            onClick={handleLogin}
+            className="w-full flex items-center justify-center gap-3 bg-slate-900 hover:bg-slate-800 text-white font-bold py-3.5 rounded-2xl transition-all active:scale-95"
+          >
+            <LogIn className="w-5 h-5" /> Sign in with Google
+          </button>
+          <p className="text-[10px] text-slate-400 font-medium">Safe & Encrypted • Powered by Firebase</p>
+        </motion.div>
       </div>
     );
   }
@@ -281,17 +365,13 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            {config && (
-              <a 
-                href={`https://docs.google.com/spreadsheets/d/${config.spreadsheetId}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                title="Open Google Sheet"
-              >
-                <ExternalLink className="w-5 h-5" />
-              </a>
-            )}
+            <button 
+              onClick={handleLogout}
+              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              title="Sign Out"
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
             <div className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-1 rounded">
               {new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
             </div>
@@ -350,6 +430,15 @@ export default function App() {
                   <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                     <Users className="w-3.5 h-3.5" /> Student Lookup
                   </h3>
+                  <label className="text-xs font-bold text-blue-600 hover:text-blue-700 cursor-pointer flex items-center gap-1 bg-blue-50 px-2 py-1 rounded-lg transition-colors">
+                    {scanning ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Camera className="w-3 h-3" />
+                    )}
+                    {scanning ? 'Scanning...' : 'Scan Scan'}
+                    <input type="file" accept="image/*" className="hidden" onChange={handleImageScan} disabled={scanning} />
+                  </label>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
@@ -431,7 +520,7 @@ export default function App() {
                           </div>
                         </div>
                         <div className="bg-white/20 p-3 rounded-full">
-                          <User className="w-8 h-8" />
+                          <UserIcon className="w-8 h-8" />
                         </div>
                       </div>
                       {/* Decorative background circle */}

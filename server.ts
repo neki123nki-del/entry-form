@@ -12,6 +12,7 @@ import {
   getSheetConfig 
 } from './server/sheets.js';
 import { scanStudentList } from './server/ai.js';
+import { syncSheetsToFirestore } from './server/firebase.js';
 
 dotenv.config();
 
@@ -32,6 +33,21 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' })); // Increased limit for image uploads
 
   // --- API Routes (The Bridge) ---
+
+  // Sync endpoint (also called periodically)
+  app.post('/api/sync', async (req, res) => {
+    try {
+      const students = await fetchStudentsFromSheet();
+      if (students) {
+        await syncSheetsToFirestore(students);
+        res.json({ status: 'success', message: 'Synced Sheets to Firestore' });
+      } else {
+        res.status(404).json({ status: 'error', message: 'No students found in Sheets' });
+      }
+    } catch (error: any) {
+      res.status(500).json({ status: 'error', message: error.message });
+    }
+  });
 
   // Health check
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
@@ -114,6 +130,28 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Backend Bridge running on http://localhost:${PORT}`);
+    
+    const serviceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    if (serviceEmail) {
+      console.log(`[Google Cloud] Service Account active: ${serviceEmail}`);
+      console.log(`[Google Cloud] IMPORTANT: Ensure this email has "Editor" access to your Spreadsheet.`);
+    }
+    
+    // Initial sync and then every 10 minutes
+    const runSync = async () => {
+      try {
+        console.log('[Sync] Starting Sheets -> Firestore background sync...');
+        const students = await fetchStudentsFromSheet();
+        if (students) {
+          await syncSheetsToFirestore(students);
+          console.log(`[Sync] Successfully synced ${students.length} students.`);
+        }
+      } catch (error) {
+        console.error('[Sync] Background sync failed:', error);
+      }
+    };
+    runSync();
+    setInterval(runSync, 10 * 60 * 1000);
   });
 }
 

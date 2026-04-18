@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "student": {
+      "title": "Student",
+      "description": "Student record mirrored from Google Sheets",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "rollNo": { "type": "string" },
+        "name": { "type": "string" },
+        "faculty": { "type": "string" },
+        "batch": { "type": "string" }
+      },
+      "required": ["id", "rollNo", "name", "faculty", "batch"]
+    },
+    "attendance": {
+      "title": "Attendance Record",
+      "description": "Individual attendance entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "rollNo": { "type": "string" },
+        "faculty": { "type": "string" },
+        "batch": { "type": "string" },
+        "status": { "type": "string", "enum": ["present", "absent", "late"] },
+        "date": { "type": "string", "format": "date" },
+        "timestamp": { "type": "string" },
+        "notes": { "type": "string" },
+        "workSubmission": {
+          "type": "object",
+          "properties": {
+            "classwork": { "type": "boolean" },
+            "classworkSubmission": { "type": "boolean" },
+            "assignment": { "type": "boolean" }
+          }
+        },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["studentId", "status", "date"]
+    },
+    "config": {
+      "title": "Configuration",
+      "description": "App configuration and state",
+      "type": "object",
+      "properties": {
+        "spreadsheetId": { "type": "string" },
+        "lastSyncAt": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "students/{studentId}": {
+      "schema": "student",
+      "description": "Collection of all students"
+    },
+    "attendance/{attendanceId}": {
+      "schema": "attendance",
+      "description": "Collection of attendance records"
+    },
+    "config/main": {
+      "schema": "config",
+      "description": "Singleton config document"
+    }
+  }
+}
