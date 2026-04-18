@@ -11,9 +11,27 @@ export function getFirebaseAdmin() {
 
   try {
     let app;
+    const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    let key = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+
     if (admin.apps.length === 0) {
+      let credential;
+      
+      if (email && key) {
+        console.log('[Firebase Admin] Using Service Account credentials from environment.');
+        key = key.replace(/\\n/g, '\n').replace(/^["'](.*)["']$/, '$1').replace(/^'(.*)'$/, '$1');
+        credential = admin.credential.cert({
+          projectId: firebaseConfig.projectId,
+          clientEmail: email,
+          privateKey: key
+        });
+      } else {
+        console.log('[Firebase Admin] Falling back to Application Default Credentials.');
+        credential = admin.credential.applicationDefault();
+      }
+
       app = admin.initializeApp({
-        credential: admin.credential.applicationDefault(),
+        credential,
         projectId: firebaseConfig.projectId
       });
     } else {
