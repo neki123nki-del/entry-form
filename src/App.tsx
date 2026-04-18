@@ -133,10 +133,19 @@ export default function App() {
   const handleLogin = async () => {
     try {
       const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      console.log('Firebase Config being used:', {
+        apiKey: auth.app.options.apiKey ? 'Present' : 'Missing',
+        authDomain: auth.app.options.authDomain,
+        projectId: auth.app.options.projectId
+      });
       await signInWithPopup(auth, provider);
     } catch (err: any) {
-      console.error('Login failed:', err);
-      if (err.code === 'auth/unauthorized-domain') {
+      console.error('Login Error Detailed:', err);
+      // "Requested action is invalid" often maps to auth/invalid-api-key or auth/invalid-auth-domain
+      if (err.message?.includes('requested action is invalid') || err.code === 'auth/invalid-api-key') {
+        setError('Configuration Error: "The requested action is invalid" usually means the Google Login provider is not enabled in your Firebase Console, or the API Key is invalid. Please ensure Google Auth is enabled under Authentication > Sign-in method.');
+      } else if (err.code === 'auth/unauthorized-domain') {
         setError('Unauthorized Domain: Please add this URL to your Firebase Console > Authentication > Settings > Authorized Domains.');
       } else {
         setError(`Login failed: ${err.message || 'Please check your connection.'}`);
