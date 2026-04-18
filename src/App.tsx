@@ -134,8 +134,13 @@ export default function App() {
     try {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
-    } catch (err) {
-      setError('Login failed. Please check your internet connection.');
+    } catch (err: any) {
+      console.error('Login failed:', err);
+      if (err.code === 'auth/unauthorized-domain') {
+        setError('Unauthorized Domain: Please add this URL to your Firebase Console > Authentication > Settings > Authorized Domains.');
+      } else {
+        setError(`Login failed: ${err.message || 'Please check your connection.'}`);
+      }
     }
   };
 
