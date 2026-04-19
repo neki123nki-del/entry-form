@@ -12,7 +12,11 @@ import {
   getSheetConfig 
 } from './server/sheets.js';
 import { scanStudentList } from './server/ai.js';
-import { syncSheetsToFirestore } from './server/firebase.js';
+import { 
+  syncSheetsToFirestore, 
+  getFirebaseAdmin,
+  saveAttendanceToFirestore 
+} from './server/firebase.js';
 import firebaseConfig from './firebase-applet-config.json';
 
 dotenv.config();
@@ -54,11 +58,32 @@ async function startServer() {
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
   // Debug Permissions
-  app.get('/api/debug/permissions', (req, res) => {
+  app.get('/api/debug/permissions', async (req, res) => {
     const config = getSheetConfig();
     const serviceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    const hasKey = !!process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    const rawKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    const hasKey = !!rawKey;
     
+    let firestoreTest = 'UNTRIED';
+    let errorMessage = null;
+
+    if (serviceEmail && hasKey) {
+      try {
+        const db = getFirebaseAdmin();
+        if (db) {
+          // Attempt a simple read to check permissions
+          await db.collection('config').doc('main').get();
+          firestoreTest = 'SUCCESS';
+        } else {
+          firestoreTest = 'FAILED_TO_INIT';
+        }
+      } catch (err: any) {
+        firestoreTest = 'FAILED';
+        errorMessage = err.message;
+        console.error('[Debug] Firestore connectivity test failed:', err);
+      }
+    }
+
     res.json({
       status: 'diagnostic',
       checks: {
@@ -67,17 +92,23 @@ async function startServer() {
         databaseId: firebaseConfig.firestoreDatabaseId,
         serviceAccountEmail: serviceEmail || 'MISSING',
         serviceAccountKey: hasKey ? 'PRESENT' : 'MISSING',
-        sheetConfigured: config.isConfigured
+        sheetConfigured: config.isConfigured,
+        firestoreConnection: firestoreTest,
+        error: errorMessage
       },
       instructions: !serviceEmail ? [
         "1. Create a Service Account in Google Cloud Console.",
         "2. Add the email to GOOGLE_SERVICE_ACCOUNT_EMAIL secret.",
         "3. Add the private key to GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY secret.",
         "4. Share your Google Sheet with the Service Account email."
+      ] : (firestoreTest === 'FAILED' ? [
+        "1. Ensure the Service Account has 'Firebase Editor' role in GCP Console.",
+        "2. Ensure the PRIVATE_KEY includes the full string starting with '-----BEGIN PRIVATE KEY-----'.",
+        "3. Verify that the Project ID in your secret matches: " + firebaseConfig.projectId
       ] : [
-        "1. Ensure the Service Account email is shared to your Google Sheet.",
-        "2. Ensure the Service Account has 'Firebase Editor' or 'Cloud Datastore User' role."
-      ]
+        "1. Ensure the Service Account email is shared to your Google Sheet as Editor.",
+        "2. If search fails, check if the spreadsheet tab name is exactly 'Students'."
+      ])
     });
   });
 
@@ -91,6 +122,14 @@ async function startServer() {
   app.post('/api/attendance', async (req, res) => {
     try {
       const success = await appendAttendanceRecords([req.body]);
+      
+      // Optional: Save to Firestore as backup
+      try {
+        await saveAttendanceToFirestore(req.body);
+      } catch (e) {
+        console.warn('[Sync] Firestore backup failed (Non-fatal):', e.message);
+      }
+
       if (success) {
         res.json({ status: 'success', message: 'Attendance saved directly to Google Sheets!' });
       } else {
@@ -105,6 +144,16 @@ async function startServer() {
   app.post('/api/attendance/bulk', async (req, res) => {
     try {
       const success = await appendAttendanceRecords(req.body.records);
+
+      // Optional: Save to Firestore as backup
+      try {
+        for (const record of req.body.records) {
+          await saveAttendanceToFirestore(record);
+        }
+      } catch (e) {
+        console.warn('[Sync] Bulk Firestore backup failed (Non-fatal):', e.message);
+      }
+
       if (success) {
         res.json({ status: 'success', message: `${req.body.records.length} records saved to Google Sheets!` });
       } else {

@@ -20,14 +20,23 @@ export function getFirebaseAdmin() {
       let medicalCredential;
       
       if (email && key) {
-        console.log('[Firebase Admin] Using Service Account credentials.');
-        key = key.replace(/\\n/g, '\n').replace(/^["'](.*)["']$/, '$1').replace(/^'(.*)'$/, '$1');
-        medicalCredential = admin.credential.cert({
-          projectId: firebaseConfig.projectId,
-          clientEmail: email,
-          privateKey: key
-        });
-      } else {
+      console.log('[Firebase Admin] Initializing with Service Account:', email);
+      key = key.replace(/\\n/g, '\n').trim();
+      
+      // Clean up common copy-paste errors
+      if (key.startsWith('"') && key.endsWith('"')) key = key.slice(1, -1);
+      if (key.startsWith("'") && key.endsWith("'")) key = key.slice(1, -1);
+      
+      if (!key.includes('PRIVATE KEY')) {
+        throw new Error('Invalid private key format. Missing BEGIN/END PRIVATE KEY labels.');
+      }
+
+      medicalCredential = admin.credential.cert({
+        projectId: firebaseConfig.projectId,
+        clientEmail: email,
+        privateKey: key
+      });
+    } else {
         console.warn('[Firebase Admin] No Service Account found. Using Application Default Credentials.');
         console.warn('[Firebase Admin] Target Project:', firebaseConfig.projectId);
         medicalCredential = admin.credential.applicationDefault();
@@ -67,17 +76,13 @@ export async function syncSheetsToFirestore(students: any[]) {
   } catch (error: any) {
     if (error.message?.includes('PERMISSION_DENIED') || error.code === 7) {
       console.error('\n' + '='.repeat(50));
-      console.error('🔥 FIREBASE PERMISSION ERROR 🔥');
+      console.error('🔥 FIREBASE PERMISSION ERROR (NON-FATAL) 🔥');
+      console.error('The backend fetched data from Sheets correctly, but could not save a backup to Firestore.');
       console.error('Active Project ID:', firebaseConfig.projectId);
-      console.error('Auth Configuration:', process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ? 'Using Service Account' : 'Using Default Credentials (ADC)');
-      console.error('\nPOSSIBLE CAUSES:');
-      console.error('1. The Service Account email is not added as an Editor to the Sheet.');
-      console.error('2. The Service Account role in Google Cloud Console is missing "Firebase Editor".');
-      console.error('3. The project ID in the config and service account do not match.');
       console.error('\nTO FIX THIS:');
-      console.error('1. Go to Settings > Secrets in the sidebar.');
-      console.error('2. Verify GOOGLE_SERVICE_ACCOUNT_EMAIL and GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY.');
+      console.error('Ensure your Service Account has "Firebase Editor" role in Google Cloud Console.');
       console.error('='.repeat(50) + '\n');
+      return; // Soft failure - don't throw, just exit sync silently
     }
     throw error;
   }
@@ -95,7 +100,8 @@ export async function saveAttendanceToFirestore(record: any) {
     });
   } catch (error: any) {
     if (error.message?.includes('PERMISSION_DENIED') || error.code === 7) {
-      console.error('[Firebase Admin] Permission Denied while saving attendance. Check your Service Account secrets.');
+      console.error('[Firebase Admin] Permission Denied while saving attendance (Non-fatal). Data was likely still saved to Google Sheets.');
+      return; 
     }
     throw error;
   }

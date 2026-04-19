@@ -165,6 +165,7 @@ export default function App() {
 
   useEffect(() => {
     checkDiagnostics();
+    refetchStudents();
   }, []);
 
   const handleSave = async () => {
@@ -447,18 +448,26 @@ export default function App() {
           <motion.div 
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-red-50 border border-red-200 rounded-2xl p-5 space-y-3"
+            className="bg-amber-50 border border-amber-200 rounded-2xl p-5 space-y-3"
           >
-            <div className="flex items-center gap-2 text-red-700">
+            <div className="flex items-center gap-2 text-amber-700">
               <AlertCircle className="w-5 h-5" />
-              <h3 className="font-bold text-sm">System Permission Error</h3>
+              <h3 className="font-bold text-sm">Database Sync (Optional) Delayed</h3>
             </div>
-            <p className="text-[11px] text-red-600 leading-relaxed font-medium">
-              The backend synchronization is failing. You must add Firebase Service Account credentials 
-              to enable Google Sheets integration.
+            <p className="text-[11px] text-amber-600 leading-relaxed font-medium">
+              We've connected to your Google Sheet! However, we could not save a backup to the Firestore database 
+              due to a permission error. Searching from Sheets will still work.
             </p>
-            <div className="bg-white/50 rounded-xl p-3 space-y-2 border border-red-100">
-              <p className="text-[10px] font-bold text-red-800 uppercase tracking-wider underline">Required Steps for Project {diagnostics.checks.projectId}:</p>
+            <div className="bg-white/50 rounded-xl p-3 space-y-2 border border-amber-100">
+              <p className="text-[10px] font-bold text-amber-800 uppercase tracking-wider underline">Steps to fix Database Backup:</p>
+              
+              {diagnostics.checks.firestoreConnection === 'FAILED' && (
+                <div className="bg-amber-100 p-2 rounded-lg mb-2">
+                  <p className="text-[10px] text-amber-800 font-bold">Database Test Failed:</p>
+                  <p className="text-[9px] text-amber-700 italic">{diagnostics.checks.error || 'Missing Permission'}</p>
+                </div>
+              )}
+
               <ul className="text-[10px] text-red-700 list-disc list-inside space-y-1">
                 {diagnostics.instructions.map((step: string, i: number) => (
                   <li key={i}>{step}</li>
@@ -466,7 +475,7 @@ export default function App() {
               </ul>
               <button 
                 onClick={checkDiagnostics}
-                className="w-full mt-2 bg-red-600 text-white text-[10px] font-bold py-1.5 rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
+                className="w-full mt-2 bg-amber-600 text-white text-[10px] font-bold py-1.5 rounded-lg hover:bg-amber-700 transition-colors flex items-center justify-center gap-2"
               >
                 <RefreshCw className="w-3 h-3" /> Re-Check Connection
               </button>
