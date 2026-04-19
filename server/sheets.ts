@@ -53,14 +53,14 @@ export const fetchStudentsFromSheet = async (): Promise<Student[] | null> => {
     return rows
       .filter(row => row && row[0] && row[0] !== 'ID' && row[0] !== 'Student Symbol')
       .map((row, index) => ({
-        id: row[0] || `S${index}`,
-        rollNo: row[1] || '',
-        name: row[2] || '',
-        faculty: row[3] || '',
-        batch: row[4] || '',
+        id: (row[0] || `S${index}`).toString().trim(),
+        rollNo: (row[1] || '').toString().trim(),
+        name: (row[2] || '').toString().trim(),
+        faculty: (row[3] || '').toString().trim(),
+        batch: (row[4] || '').toString().trim(),
       }));
-  } catch (error) {
-    console.error('[Sheets] Fetch error:', error);
+  } catch (error: any) {
+    console.error('[Sheets] Fetch error:', error.message);
     return null;
   }
 };

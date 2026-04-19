@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Search, 
   User as UserIcon, 
@@ -17,36 +17,68 @@ import {
   Camera,
   Upload,
   LogOut,
-  LogIn
+  LogIn,
+  RefreshCw,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import { Student, AttendanceStatus, AttendanceRecord } from './types';
-import { db, auth } from './lib/firebase';
+import { db } from './lib/firebase';
 import { 
   collection, 
-  onSnapshot, 
   addDoc, 
   serverTimestamp, 
-  doc, 
-  getDocFromServer,
-  query,
-  orderBy
 } from 'firebase/firestore';
-import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
 import { GoogleGenAI, Type } from '@google/genai';
+import { useFirebase } from './hooks/useFirebase';
+
+const DEMO_STUDENTS: Student[] = [
+  { id: 'DEMO-001', rollNo: '001', name: 'Aarav Sharma', faculty: 'Science', batch: '2024' },
+  { id: 'DEMO-002', rollNo: '002', name: 'Isha Patel', faculty: 'Science', batch: '2024' },
+  { id: 'DEMO-003', rollNo: '101', name: 'Rohan Gupta', faculty: 'Management', batch: '2023' },
+  { id: 'DEMO-004', rollNo: '102', name: 'Sanya Singh', faculty: 'Management', batch: '2023' },
+  { id: 'DEMO-005', rollNo: '501', name: 'Kunal Verma', faculty: 'Arts', batch: '2022' }
+];
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [students, setStudents] = useState<Student[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { 
+    user, 
+    students, 
+    loading, 
+    error, 
+    setError,
+    login, 
+    logout,
+    faculties,
+    setStudents,
+    refetchStudents
+  } = useFirebase() as any; 
+
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
-  const [config, setConfig] = useState<{ spreadsheetId: string, isConfigured: boolean } | null>(null);
   const [scanning, setScanning] = useState(false);
   const [activeTab, setActiveTab] = useState<'lookup' | 'mass'>('lookup');
   const [massRollNos, setMassRollNos] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [hasCamera, setHasCamera] = useState<boolean>(false);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Check camera availability
+  useEffect(() => {
+    async function checkCamera() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        setHasCamera(devices.some(device => device.kind === 'videoinput'));
+      } catch (err) {
+        console.warn('Camera detection failed:', err);
+      }
+    }
+    checkCamera();
+  }, []);
 
   // Form State
   const [selectedFaculty, setSelectedFaculty] = useState<string>('');
@@ -62,98 +94,78 @@ export default function App() {
   const [teacherNotes, setTeacherNotes] = useState('');
 
   // Derived Data
-  const faculties = useMemo(() => Array.from(new Set(students.map(s => s.faculty).filter(Boolean))), [students]);
   const batches = useMemo(() => {
     if (!selectedFaculty) return [];
     return Array.from(new Set(students.filter(s => s.faculty === selectedFaculty).map(s => s.batch).filter(Boolean)));
   }, [students, selectedFaculty]);
 
-  // Fetch data and handle auth
-  useEffect(() => {
-    let unsubStudents: (() => void) | null = null;
-    let unsubConfig: (() => void) | null = null;
-
-    const unsubAuth = onAuthStateChanged(auth, (user) => {
-      setUser(user);
-      
-      if (user) {
-        // Real-time students listener
-        unsubStudents = onSnapshot(collection(db, 'students'), (snapshot) => {
-          const studentsList = snapshot.docs.map(doc => ({ ...doc.data() } as Student));
-          setStudents(studentsList);
-        });
-
-        // Real-time config listener
-        unsubConfig = onSnapshot(doc(db, 'config', 'main'), (snapshot) => {
-          if (snapshot.exists()) {
-            setConfig(snapshot.data() as any);
-          }
-        });
-
-        // Test connection as required by security guidelines
-        const testConn = async () => {
-          try {
-            await getDocFromServer(doc(db, 'config', 'main'));
-          } catch (error) {
-            console.error("Firestore connectivity check failed:", error);
-          }
-        };
-        testConn();
-      } else {
-        // Clear data if logged out
-        setStudents([]);
-        setConfig(null);
-        if (unsubStudents) unsubStudents();
-        if (unsubConfig) unsubConfig();
-      }
-      setLoading(false);
-    });
-
-    return () => {
-      unsubAuth();
-      if (unsubStudents) unsubStudents();
-      if (unsubConfig) unsubConfig();
-    };
-  }, []);
+  const filteredStudents = useMemo(() => {
+    if (!selectedFaculty || !selectedBatch) return [];
+    return students.filter(s => s.faculty === selectedFaculty && s.batch === selectedBatch);
+  }, [students, selectedFaculty, selectedBatch]);
 
   // Search student when roll no, faculty, or batch changes
   useEffect(() => {
     if (searchRollNo && selectedFaculty && selectedBatch) {
       const student = students.find(s => 
-        s.rollNo === searchRollNo && 
-        s.faculty === selectedFaculty && 
-        s.batch === selectedBatch
+        s.rollNo.toString().trim() === searchRollNo.toString().trim() && 
+        s.faculty.toString().trim().toLowerCase() === selectedFaculty.toString().trim().toLowerCase() && 
+        s.batch.toString().trim().toLowerCase() === selectedBatch.toString().trim().toLowerCase()
       );
-      setSelectedStudent(student || null);
-    } else {
-      setSelectedStudent(null);
+      if (student) setSelectedStudent(student);
     }
   }, [searchRollNo, selectedFaculty, selectedBatch, students]);
 
-  const handleLogin = async () => {
+  const loadDemoData = () => {
+    setStudents(DEMO_STUDENTS);
+    setSaveStatus({ type: 'success', message: 'Loaded demo records for testing!' });
+  };
+
+  const handleManualSync = async () => {
+    setSyncing(true);
+    setSaveStatus(null);
     try {
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-      console.log('Firebase Config being used:', {
-        apiKey: auth.app.options.apiKey ? 'Present' : 'Missing',
-        authDomain: auth.app.options.authDomain,
-        projectId: auth.app.options.projectId
-      });
-      await signInWithPopup(auth, provider);
-    } catch (err: any) {
-      console.error('Login Error Detailed:', err);
-      // "Requested action is invalid" often maps to auth/invalid-api-key or auth/invalid-auth-domain
-      if (err.message?.includes('requested action is invalid') || err.code === 'auth/invalid-api-key') {
-        setError('Configuration Error: "The requested action is invalid" usually means the Google Login provider is not enabled in your Firebase Console, or the API Key is invalid. Please ensure Google Auth is enabled under Authentication > Sign-in method.');
-      } else if (err.code === 'auth/unauthorized-domain') {
-        setError('Unauthorized Domain: Please add this URL to your Firebase Console > Authentication > Settings > Authorized Domains.');
+      // 1. Trigger background sync
+      const res = await fetch('/api/sync', { method: 'POST' });
+      const syncData = await res.json();
+      
+      // 2. Regardless of sync success (in case Firestore is blocked), fetch directly to UI
+      const freshStudents = await refetchStudents();
+      
+      if (res.ok) {
+        setSaveStatus({ type: 'success', message: `${freshStudents?.length || syncData.count} students fetched from Google Sheets!` });
+        setDiagnostics(null);
       } else {
-        setError(`Login failed: ${err.message || 'Please check your connection.'}`);
+        if (syncData.message?.includes('PERMISSION_DENIED')) {
+          checkDiagnostics();
+          if (freshStudents && freshStudents.length > 0) {
+            setSaveStatus({ type: 'success', message: 'Sheets connected! (Note: Background sync to database was skipped)' });
+          }
+        }
+        if (!freshStudents || freshStudents.length === 0) {
+          throw new Error(syncData.message || 'Sync failed');
+        }
       }
+    } catch (err: any) {
+      setSaveStatus({ type: 'error', message: err.message });
+    } finally {
+      setSyncing(false);
     }
   };
 
-  const handleLogout = () => signOut(auth);
+  const checkDiagnostics = async () => {
+    try {
+      const res = await fetch('/api/debug/permissions');
+      const data = await res.json();
+      setDiagnostics(data);
+    } catch (e) {
+      console.error('Failed to run diagnostics');
+    }
+  };
+
+  useEffect(() => {
+    checkDiagnostics();
+  }, []);
 
   const handleSave = async () => {
     if (!selectedStudent || !user) return;
@@ -200,6 +212,68 @@ export default function App() {
       setSaveStatus({ type: 'error', message: err instanceof Error ? err.message : 'Sync failed' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const toggleCamera = async () => {
+    if (isCameraActive) {
+      stopCamera();
+      setIsCameraActive(false);
+    } else {
+      try {
+        setIsCameraActive(true);
+        // We'll initialize the actual stream in a useEffect or after state update
+      } catch (err) {
+        setSaveStatus({ type: 'error', message: 'Could not access camera' });
+      }
+    }
+  };
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    if (isCameraActive && videoRef.current) {
+      navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'environment' } 
+      }).then(s => {
+        stream = s;
+        if (videoRef.current) {
+          videoRef.current.srcObject = s;
+        }
+      }).catch(err => {
+        console.error('Camera access error:', err);
+        setIsCameraActive(false);
+        setSaveStatus({ type: 'error', message: 'Camera access denied' });
+      });
+    }
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [isCameraActive]);
+
+  const stopCamera = () => {
+    setIsCameraActive(false);
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(async (blob) => {
+          if (blob) {
+            const file = new File([blob], "capture.jpg", { type: "image/jpeg" });
+            const mockEvent = { target: { files: [file] } } as any;
+            handleImageScan(mockEvent);
+            stopCamera();
+          }
+        }, 'image/jpeg');
+      }
     }
   };
 
@@ -347,7 +421,7 @@ export default function App() {
             <p className="text-sm text-slate-500">Sign in to sync attendance across your devices and link with Google Sheets.</p>
           </div>
           <button
-            onClick={handleLogin}
+            onClick={login}
             className="w-full flex items-center justify-center gap-3 bg-slate-900 hover:bg-slate-800 text-white font-bold py-3.5 rounded-2xl transition-all active:scale-95"
           >
             <LogIn className="w-5 h-5" /> Sign in with Google
@@ -369,18 +443,26 @@ export default function App() {
             </div>
             <div className="flex flex-col">
               <h1 className="text-xl font-bold tracking-tight text-slate-800 leading-none">EduTrack</h1>
-              {students.length > 0 && (
-                <div className="mt-1">
+              <div className="flex items-center gap-2 mt-1">
+                {students.length > 0 && (
                   <div className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider inline-block">
                     {students.length} Students Loaded
                   </div>
-                </div>
-              )}
+                )}
+                <button 
+                  onClick={handleManualSync}
+                  disabled={syncing}
+                  className="p-1 hover:bg-slate-100 rounded-full transition-colors disabled:opacity-50"
+                  title="Refresh from Google Sheets"
+                >
+                  <RefreshCw className={cn("w-3 h-3 text-blue-600", syncing && "animate-spin")} />
+                </button>
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <button 
-              onClick={handleLogout}
+              onClick={logout}
               className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
               title="Sign Out"
             >
@@ -394,6 +476,39 @@ export default function App() {
       </header>
 
       <main className="max-w-md mx-auto px-6 pt-6 space-y-6">
+        {/* Permission Diagnostics Alert */}
+        {diagnostics && (diagnostics.checks.serviceAccountEmail === 'MISSING' || diagnostics.checks.serviceAccountKey === 'MISSING') && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-red-50 border border-red-200 rounded-2xl p-5 space-y-3"
+          >
+            <div className="flex items-center gap-2 text-red-700">
+              <AlertCircle className="w-5 h-5" />
+              <h3 className="font-bold text-sm">System Permission Error</h3>
+            </div>
+            <p className="text-[11px] text-red-600 leading-relaxed font-medium">
+              The backend synchronization is failing. You must add Firebase Service Account credentials 
+              to enable Google Sheets integration.
+            </p>
+            <div className="bg-white/50 rounded-xl p-3 space-y-2 border border-red-100">
+              <p className="text-[10px] font-bold text-red-800 uppercase tracking-wider underline">Required Steps for Project {diagnostics.checks.projectId}:</p>
+              <ul className="text-[10px] text-red-700 list-disc list-inside space-y-1">
+                {diagnostics.instructions.map((step: string, i: number) => (
+                  <li key={i}>{step}</li>
+                ))}
+              </ul>
+              <button 
+                onClick={checkDiagnostics}
+                className="w-full mt-2 bg-red-600 text-white text-[10px] font-bold py-1.5 rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
+              >
+                <RefreshCw className="w-3 h-3" /> Re-Check Connection
+              </button>
+            </div>
+            <p className="text-[9px] text-red-400 italic">This is required for the server to securely communicate between Sheets and Firestore.</p>
+          </motion.div>
+        )}
+
         {/* Tab Switcher */}
         <div className="flex gap-2 bg-slate-100 p-1 rounded-2xl">
           <button 
@@ -416,19 +531,6 @@ export default function App() {
           </button>
         </div>
 
-        {/* Config Alert */}
-        {config && !config.isConfigured && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <h4 className="text-sm font-bold text-amber-900">Direct Link Not Configured</h4>
-              <p className="text-xs text-amber-800 leading-relaxed">
-                App is running in <strong>Demo Mode</strong>. To save to Google Sheets, add your Service Account credentials in <strong>Settings &gt; Secrets</strong>.
-              </p>
-            </div>
-          </div>
-        )}
-
         <AnimatePresence mode="wait">
           {activeTab === 'lookup' ? (
             <motion.div 
@@ -444,16 +546,71 @@ export default function App() {
                   <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                     <Users className="w-3.5 h-3.5" /> Student Lookup
                   </h3>
-                  <label className="text-xs font-bold text-blue-600 hover:text-blue-700 cursor-pointer flex items-center gap-1 bg-blue-50 px-2 py-1 rounded-lg transition-colors">
-                    {scanning ? (
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <Camera className="w-3 h-3" />
-                    )}
-                    {scanning ? 'Scanning...' : 'Scan Scan'}
-                    <input type="file" accept="image/*" className="hidden" onChange={handleImageScan} disabled={scanning} />
-                  </label>
+                  {hasCamera ? (
+                    <button 
+                      onClick={toggleCamera}
+                      className="text-xs font-bold text-blue-600 hover:text-blue-700 cursor-pointer flex items-center gap-1 bg-blue-50 px-2 py-1 rounded-lg transition-colors"
+                    >
+                      {scanning ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Camera className="w-3.5 h-3.5" />
+                      )}
+                      {scanning ? 'Scanning...' : 'Take Photo'}
+                    </button>
+                  ) : (
+                    <label className="text-xs font-bold text-blue-600 hover:text-blue-700 cursor-pointer flex items-center gap-1 bg-blue-50 px-2 py-1 rounded-lg transition-colors">
+                      {scanning ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Camera className="w-3.5 h-3.5" />
+                      )}
+                      {scanning ? 'Scanning...' : 'Upload Image'}
+                      <input type="file" accept="image/*" className="hidden" onChange={handleImageScan} disabled={scanning} />
+                    </label>
+                  )}
                 </div>
+
+                {isCameraActive && (
+                  <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center p-4">
+                    <div className="relative w-full max-w-sm aspect-[3/4] bg-slate-900 rounded-3xl overflow-hidden shadow-2xl ring-1 ring-white/20">
+                      <video 
+                        ref={videoRef} 
+                        autoPlay 
+                        playsInline 
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute inset-0 border-2 border-white/20 pointer-events-none m-8 rounded-2xl">
+                        <div className="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-white/80 rounded-tl-xl"></div>
+                        <div className="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-white/80 rounded-tr-xl"></div>
+                        <div className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-white/80 rounded-bl-xl"></div>
+                        <div className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-white/80 rounded-br-xl"></div>
+                      </div>
+                    </div>
+                    
+                    <div className="mt-8 flex items-center gap-6">
+                      <button 
+                        onClick={stopCamera}
+                        className="p-4 bg-white/10 hover:bg-white/20 text-white rounded-full transition-all active:scale-95"
+                      >
+                        <X className="w-6 h-6" />
+                      </button>
+                      <button 
+                        onClick={capturePhoto}
+                        className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-xl active:scale-90 transition-transform"
+                      >
+                        <div className="w-16 h-16 rounded-full border-4 border-slate-900"></div>
+                      </button>
+                      <label className="p-4 bg-white/10 hover:bg-white/20 text-white rounded-full transition-all active:scale-95 cursor-pointer">
+                        <Upload className="w-6 h-6" />
+                        <input type="file" accept="image/*" className="hidden" onChange={(e) => { handleImageScan(e); stopCamera(); }} />
+                      </label>
+                    </div>
+                    
+                    <canvas ref={canvasRef} className="hidden" />
+                    <p className="mt-6 text-white/60 text-xs font-medium tracking-wide">Align text within the frame</p>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
@@ -467,9 +624,10 @@ export default function App() {
                           setSelectedFaculty(e.target.value);
                           setSelectedBatch('');
                         }}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm appearance-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none"
+                        disabled={faculties.length === 0}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm appearance-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none disabled:opacity-50"
                       >
-                        <option value="">Select</option>
+                        <option value="">{faculties.length === 0 ? 'No Data Found' : 'Select Faculty'}</option>
                         {faculties.map(f => <option key={f} value={f}>{f}</option>)}
                       </select>
                       <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -484,10 +642,10 @@ export default function App() {
                       <select 
                         value={selectedBatch}
                         onChange={(e) => setSelectedBatch(e.target.value)}
-                        disabled={!selectedFaculty}
+                        disabled={!selectedFaculty || batches.length === 0}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm appearance-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none disabled:opacity-50"
                       >
-                        <option value="">Select</option>
+                        <option value="">{batches.length === 0 && selectedFaculty ? 'No Batches Found' : 'Select Batch'}</option>
                         {batches.map(b => <option key={b} value={b}>{b}</option>)}
                       </select>
                       <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -495,21 +653,84 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                    <Search className="w-3.5 h-3.5" /> Roll No.
-                  </label>
-                  <div className="relative">
-                    <input 
-                      type="text"
-                      placeholder="Enter Roll Number"
-                      value={searchRollNo}
-                      onChange={(e) => setSearchRollNo(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none"
-                    />
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <div className="grid grid-cols-1 gap-4 mt-2">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                      <GraduationCap className="w-3.5 h-3.5" /> Select Student
+                    </label>
+                    <div className="relative">
+                      <select 
+                        value={selectedStudent?.id || ''}
+                        onChange={(e) => {
+                          const student = students.find(s => s.id === e.target.value);
+                          setSelectedStudent(student || null);
+                        }}
+                        disabled={filteredStudents.length === 0}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm appearance-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none disabled:opacity-50"
+                      >
+                        <option value="">{filteredStudents.length === 0 ? 'Select Faculty/Batch First' : `Select from ${filteredStudents.length} Students`}</option>
+                        {filteredStudents.map(s => (
+                          <option key={s.id} value={s.id}>{s.rollNo} - {s.name}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1 space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                        <Search className="w-3.5 h-3.5" /> Quick Roll Search
+                      </label>
+                      <div className="relative">
+                        <input 
+                          type="text"
+                          placeholder="Roll No"
+                          value={searchRollNo}
+                          onChange={(e) => setSearchRollNo(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none"
+                        />
+                        <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      </div>
+                    </div>
                   </div>
                 </div>
+
+                {faculties.length === 0 && !loading && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-start gap-3"
+                  >
+                    <AlertCircle className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-bold text-blue-900">No Student Data Found</h4>
+                      <p className="text-[10px] text-blue-800 leading-relaxed">
+                        The student list is currently empty. Please ensure:
+                        <br />1. Your Google Sheet has a tab named <strong>"Students"</strong>.
+                        <br />2. Data starts from row 2 (A: ID, B: Roll No, C: Name, D: Faculty, E: Batch).
+                        <br />3. Click the <RefreshCw className="inline w-3 h-3 text-blue-600 animate-pulse" /> icon in header to sync.
+                      </p>
+                      <button 
+                        onClick={loadDemoData}
+                        className="mt-2 text-[10px] font-bold text-blue-600 bg-white border border-blue-200 px-3 py-1 rounded-lg hover:bg-blue-50 transition-colors"
+                      >
+                        Load Demo Data Instead
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+
+                {searchRollNo && selectedFaculty && selectedBatch && !selectedStudent && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="bg-amber-50 border border-amber-100 rounded-xl p-3 flex items-center gap-2 text-amber-700 text-[10px] font-semibold"
+                  >
+                    <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
+                    <span>Roll No. {searchRollNo} not found in this Faculty/Batch.</span>
+                  </motion.div>
+                )}
               </section>
 
               {/* Student Details Section with its own AnimatePresence */}
@@ -528,9 +749,11 @@ export default function App() {
                         <div className="space-y-1">
                           <p className="text-blue-100 text-xs font-medium uppercase tracking-widest">Student Profile</p>
                           <h2 className="text-2xl font-bold">{selectedStudent.name}</h2>
-                          <div className="flex items-center gap-2 mt-2">
-                            <span className="bg-white/20 px-2 py-0.5 rounded text-[10px] font-bold uppercase">ID: {selectedStudent.id}</span>
-                            <span className="bg-white/20 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Roll: {selectedStudent.rollNo}</span>
+                          <div className="flex flex-wrap items-center gap-2 mt-2">
+                            <span className="bg-white/20 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-tight">ID: {selectedStudent.id}</span>
+                            <span className="bg-white/20 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-tight">Roll: {selectedStudent.rollNo}</span>
+                            <span className="bg-white/20 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-tight">{selectedStudent.faculty}</span>
+                            <span className="bg-white/20 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-tight">{selectedStudent.batch}</span>
                           </div>
                         </div>
                         <div className="bg-white/20 p-3 rounded-full">
@@ -675,9 +898,10 @@ export default function App() {
                           setSelectedFaculty(e.target.value);
                           setSelectedBatch('');
                         }}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm appearance-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none"
+                        disabled={faculties.length === 0}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm appearance-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none disabled:opacity-50"
                       >
-                        <option value="">Select</option>
+                        <option value="">{faculties.length === 0 ? 'No Data Found' : 'Select Faculty'}</option>
                         {faculties.map(f => <option key={f} value={f}>{f}</option>)}
                       </select>
                       <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -692,10 +916,10 @@ export default function App() {
                       <select 
                         value={selectedBatch}
                         onChange={(e) => setSelectedBatch(e.target.value)}
-                        disabled={!selectedFaculty}
+                        disabled={!selectedFaculty || batches.length === 0}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm appearance-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none disabled:opacity-50"
                       >
-                        <option value="">Select</option>
+                        <option value="">{batches.length === 0 && selectedFaculty ? 'No Batches Found' : 'Select Batch'}</option>
                         {batches.map(b => <option key={b} value={b}>{b}</option>)}
                       </select>
                       <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />

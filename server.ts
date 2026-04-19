@@ -13,6 +13,7 @@ import {
 } from './server/sheets.js';
 import { scanStudentList } from './server/ai.js';
 import { syncSheetsToFirestore } from './server/firebase.js';
+import firebaseConfig from './firebase-applet-config.json';
 
 dotenv.config();
 
@@ -52,9 +53,32 @@ async function startServer() {
   // Health check
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
-  // Get configuration status
-  app.get('/api/config', (req, res) => {
-    res.json(getSheetConfig());
+  // Debug Permissions
+  app.get('/api/debug/permissions', (req, res) => {
+    const config = getSheetConfig();
+    const serviceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    const hasKey = !!process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    
+    res.json({
+      status: 'diagnostic',
+      checks: {
+        firebaseConfigExists: !!firebaseConfig,
+        projectId: firebaseConfig.projectId,
+        databaseId: firebaseConfig.firestoreDatabaseId,
+        serviceAccountEmail: serviceEmail || 'MISSING',
+        serviceAccountKey: hasKey ? 'PRESENT' : 'MISSING',
+        sheetConfigured: config.isConfigured
+      },
+      instructions: !serviceEmail ? [
+        "1. Create a Service Account in Google Cloud Console.",
+        "2. Add the email to GOOGLE_SERVICE_ACCOUNT_EMAIL secret.",
+        "3. Add the private key to GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY secret.",
+        "4. Share your Google Sheet with the Service Account email."
+      ] : [
+        "1. Ensure the Service Account email is shared to your Google Sheet.",
+        "2. Ensure the Service Account has 'Firebase Editor' or 'Cloud Datastore User' role."
+      ]
+    });
   });
 
   // Fetch student list

@@ -1,5 +1,5 @@
 {
   "name": "My Attendance app",
   "description": "An AI-powered attendance tracking app synced with Google Sheets, featuring mobile-first design, mass entry, and student list scanning.",
-  "requestFramePermissions": []
+  "requestFramePermissions": ["camera"]
 }

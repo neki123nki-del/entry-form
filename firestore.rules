@@ -22,34 +22,19 @@ service cloud.firestore {
 
     // --- Student Rules ---
     match /students/{studentId} {
-      // Students are mirrored from Sheets by the backend service account
-      // Or by an admin user. For now, let's allow read for all signed in.
-      allow read: if isSignedIn();
-      allow write: if false; // Only server should write
+      // Students are mirrored from Sheets. 
+      // Loosening per user request to "ACCEPT ALL PERMISSION"
+      allow read, write: if isSignedIn();
     }
 
     // --- Attendance Rules ---
-    function isValidAttendance(data) {
-      return data.studentId is string && 
-             data.status in ['present', 'absent', 'late'] &&
-             data.date is string &&
-             data.date.size() <= 10;
-    }
-
     match /attendance/{attendanceId} {
-      allow read: if isSignedIn();
-      allow list: if isSignedIn() && resource.data.teacherId == request.auth.uid; // Secure list query
-      allow create: if isSignedIn() && isValidAttendance(request.resource.data) && isValidId(attendanceId) && request.resource.data.teacherId == request.auth.uid;
-      allow update: if isSignedIn() && isValidAttendance(request.resource.data) && 
-                      request.resource.data.teacherId == request.auth.uid &&
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'notes', 'workSubmission']);
-      allow delete: if false;
+      allow read, write: if isSignedIn();
     }
 
     // --- Config Rules ---
     match /config/{configId} {
-      allow read: if isSignedIn();
-      allow write: if false;
+      allow read, write: if isSignedIn();
     }
   }
 }
