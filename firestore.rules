@@ -22,19 +22,18 @@ service cloud.firestore {
 
     // --- Student Rules ---
     match /students/{studentId} {
-      // Students are mirrored from Sheets. 
-      // Loosening per user request to "ACCEPT ALL PERMISSION"
-      allow read, write: if isSignedIn();
+      // Loosening per user request to remove login
+      allow read, write: if true;
     }
 
     // --- Attendance Rules ---
     match /attendance/{attendanceId} {
-      allow read, write: if isSignedIn();
+      allow read, write: if true;
     }
 
     // --- Config Rules ---
     match /config/{configId} {
-      allow read, write: if isSignedIn();
+      allow read, write: if true;
     }
   }
 }

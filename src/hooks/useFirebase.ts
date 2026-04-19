@@ -5,52 +5,38 @@ import { db, auth } from '../lib/firebase';
 import { Student } from '../types';
 
 export function useFirebase() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<any>({ uid: 'guest-staff', email: 'staff@edutrack.local', displayName: 'Staff' });
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<{ spreadsheetId: string, isConfigured: boolean } | null>(null);
 
   useEffect(() => {
-    let unsubStudents: (() => void) | null = null;
-    let unsubConfig: (() => void) | null = null;
-
-    const unsubAuth = onAuthStateChanged(auth, (user) => {
-      setUser(user);
-      
-      if (user) {
-        unsubStudents = onSnapshot(collection(db, 'students'), (snapshot) => {
-          const studentsList = snapshot.docs.map(doc => ({ ...doc.data() } as Student));
-          setStudents(studentsList);
-        });
-
-        unsubConfig = onSnapshot(doc(db, 'config', 'main'), (snapshot) => {
-          if (snapshot.exists()) {
-            setConfig(snapshot.data() as any);
-          }
-        });
-
-        const testConn = async () => {
-          try {
-            await getDocFromServer(doc(db, 'config', 'main'));
-          } catch (error) {
-            console.error("Firestore connectivity check failed:", error);
-          }
-        };
-        testConn();
-      } else {
-        setStudents([]);
-        setConfig(null);
-        if (unsubStudents) unsubStudents();
-        if (unsubConfig) unsubConfig();
-      }
-      setLoading(false);
+    const unsubStudents = onSnapshot(collection(db, 'students'), (snapshot) => {
+      const studentsList = snapshot.docs.map(doc => ({ ...doc.data() } as Student));
+      setStudents(studentsList);
     });
 
+    const unsubConfig = onSnapshot(doc(db, 'config', 'main'), (snapshot) => {
+      if (snapshot.exists()) {
+        setConfig(snapshot.data() as any);
+      }
+    });
+
+    const testConn = async () => {
+      try {
+        await getDocFromServer(doc(db, 'config', 'main'));
+      } catch (error) {
+        console.error("Firestore connectivity check failed:", error);
+      }
+    };
+    testConn();
+
+    setLoading(false);
+
     return () => {
-      unsubAuth();
-      if (unsubStudents) unsubStudents();
-      if (unsubConfig) unsubConfig();
+      unsubStudents();
+      unsubConfig();
     };
   }, []);
 
@@ -70,17 +56,8 @@ export function useFirebase() {
     return null;
   };
 
-  const login = async () => {
-    try {
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-      await signInWithPopup(auth, provider);
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
-
-  const logout = () => signOut(auth);
+  const login = async () => {};
+  const logout = () => {};
 
   const faculties = useMemo(() => Array.from(new Set(students.map(s => s.faculty).filter(Boolean))), [students]);
 

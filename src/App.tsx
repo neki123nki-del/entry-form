@@ -405,33 +405,6 @@ export default function App() {
     }
   };
 
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-3xl p-8 shadow-xl max-w-sm w-full text-center space-y-6 border border-slate-100"
-        >
-          <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-blue-200">
-            <GraduationCap className="w-10 h-10 text-white" />
-          </div>
-          <div className="space-y-2">
-            <h1 className="text-2xl font-bold text-slate-800">EduTrack Access</h1>
-            <p className="text-sm text-slate-500">Sign in to sync attendance across your devices and link with Google Sheets.</p>
-          </div>
-          <button
-            onClick={login}
-            className="w-full flex items-center justify-center gap-3 bg-slate-900 hover:bg-slate-800 text-white font-bold py-3.5 rounded-2xl transition-all active:scale-95"
-          >
-            <LogIn className="w-5 h-5" /> Sign in with Google
-          </button>
-          <p className="text-[10px] text-slate-400 font-medium">Safe & Encrypted • Powered by Firebase</p>
-        </motion.div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-12">
       {/* Header */}
@@ -461,13 +434,6 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <button 
-              onClick={logout}
-              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-              title="Sign Out"
-            >
-              <LogOut className="w-5 h-5" />
-            </button>
             <div className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-1 rounded">
               {new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
             </div>
