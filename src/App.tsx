@@ -449,12 +449,25 @@ export default function App() {
               <h3 className="font-bold text-sm">Database Sync (Optional) Delayed</h3>
             </div>
             <p className="text-[11px] text-amber-600 leading-relaxed font-medium">
-              We've connected to your Google Sheet! However, we could not save a backup to the Firestore database 
-              due to a permission error. Searching from Sheets will still work.
+              We've connected to the server! However, we found some configuration issues that prevent data from saving correctly.
             </p>
             <div className="bg-white/50 rounded-xl p-3 space-y-2 border border-amber-100">
-              <p className="text-[10px] font-bold text-amber-800 uppercase tracking-wider underline">Steps to fix Database Backup:</p>
+              <p className="text-[10px] font-bold text-amber-800 uppercase tracking-wider underline">Urgent Fixes Required:</p>
               
+              {diagnostics.checks.sheetsConnection === 'FAILED' && (
+                <div className="bg-red-50 border border-red-200 p-2 rounded-lg mb-2">
+                  <p className="text-[10px] text-red-800 font-bold flex items-center gap-1">
+                    <XCircle className="w-3 h-3" /> Sheets Access Denied
+                  </p>
+                  <p className="text-[9px] text-red-700 leading-tight mt-1">
+                    Your spreadsheet is not shared with the Service Account.
+                  </p>
+                  <p className="text-[9px] text-red-700 font-bold mt-1">
+                    Fix: Copy the Service Account email below and share your Google Sheet with it as "Editor".
+                  </p>
+                </div>
+              )}
+
               {diagnostics.checks.projectMismatch && (
                 <div className="bg-red-50 border border-red-200 p-2 rounded-lg mb-2">
                   <p className="text-[10px] text-red-800 font-bold flex items-center gap-1">
@@ -533,8 +546,17 @@ export default function App() {
                         </button>
                       </div>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500 italic">Connection:</span>
+                    <div className="flex justify-between border-b border-white/5 pb-1">
+                      <span className="text-slate-500 italic">Sheets:</span>
+                      <span className={cn(
+                        "font-bold",
+                        diagnostics.checks.sheetsConnection === 'SUCCESS' ? "text-green-400" : "text-red-400"
+                      )}>
+                        {diagnostics.checks.sheetsConnection}
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-b border-white/5 pb-1">
+                      <span className="text-slate-500 italic">Firestore:</span>
                       <span className={cn(
                         "font-bold",
                         diagnostics.checks.firestoreConnection === 'SUCCESS' ? "text-green-400" : "text-red-400"

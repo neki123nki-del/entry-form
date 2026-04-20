@@ -145,3 +145,16 @@ export const getSheetConfig = () => ({
   isConfigured: !!(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.includes('PRIVATE KEY')),
   aiConfigured: !!(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'YOUR_GEMINI_API_KEY')
 });
+
+export const testSheetsAccess = async (): Promise<{ success: boolean; error?: string }> => {
+  const sheets = await getSheetsClient();
+  if (!sheets) return { success: false, error: 'Service Account credentials missing in environment.' };
+  
+  try {
+    await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+    return { success: true };
+  } catch (error: any) {
+    console.error('[Sheets] Diagnostic access test failed:', error.message);
+    return { success: false, error: error.message };
+  }
+};

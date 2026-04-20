@@ -70,8 +70,19 @@ async function startServer() {
   // Debug Permissions
   app.get('/api/debug/permissions', async (req, res) => {
     try {
+      const { testSheetsAccess } = await import('./server/sheets.js');
+      const sheetsTest = await testSheetsAccess();
       const diagnostics = await getFirestoreDiagnostics();
-      res.json(diagnostics);
+      
+      // Merge Sheets info into diagnostics
+      res.json({
+        ...diagnostics,
+        checks: {
+          ...diagnostics.checks,
+          sheetsConnection: sheetsTest.success ? 'SUCCESS' : 'FAILED',
+          sheetsError: sheetsTest.error || null
+        }
+      });
     } catch (error: any) {
       res.status(500).json({ status: 'error', message: error.message });
     }
