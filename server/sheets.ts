@@ -98,27 +98,33 @@ export const appendAttendanceRecords = async (records: any[]): Promise<boolean> 
   }
 };
 
-export const bulkUpdateStudents = async (students: Student[]): Promise<void> => {
+export const bulkUpdateStudents = async (newStudents: Student[]): Promise<void> => {
   const sheets = await getSheetsClient();
   if (!sheets) throw new Error('Google Sheets not linked. Add Service Account credentials in Settings > Secrets.');
 
   try {
-    const values = students.map(s => [
-      s.id || `S${Math.random().toString(36).substr(2, 9)}`,
+    // 1. Fetch existing students to avoid duplicates
+    const existingStudents = await fetchStudentsFromSheet() || [];
+    const existingIds = new Set(existingStudents.map(s => s.id));
+
+    // 2. Filter out duplicates
+    const uniqueNewStudents = newStudents.filter(s => s.id && !existingIds.has(s.id));
+
+    if (uniqueNewStudents.length === 0) {
+      console.log('[Sheets] No new unique students to add.');
+      return;
+    }
+
+    const values = uniqueNewStudents.map(s => [
+      s.id,
       s.rollNo || '',
       s.name || '',
       s.faculty || '',
       s.batch || ''
     ]);
 
-    console.log(`[Sheets] Clearing range Students!A2:E for ${values.length} students...`);
-    await sheets.spreadsheets.values.clear({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'Students!A2:E',
-    });
-
-    console.log(`[Sheets] Updating Students!A2 with new data...`);
-    await sheets.spreadsheets.values.update({
+    console.log(`[Sheets] Appending ${values.length} new unique students to Students!A2...`);
+    await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
       range: 'Students!A2',
       valueInputOption: 'USER_ENTERED',

@@ -15,11 +15,21 @@ import { scanStudentList } from './server/ai.js';
 import { 
   syncSheetsToFirestore, 
   getFirebaseAdmin,
-  saveAttendanceToFirestore 
+  saveAttendanceToFirestore,
+  getFirestoreDiagnostics
 } from './server/firebase.js';
 import firebaseConfig from './firebase-applet-config.json';
+import admin from 'firebase-admin';
 
 dotenv.config();
+
+// Critical Error Handling
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Server] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[Server] Uncaught Exception:', err);
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,57 +69,12 @@ async function startServer() {
 
   // Debug Permissions
   app.get('/api/debug/permissions', async (req, res) => {
-    const config = getSheetConfig();
-    const serviceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    const rawKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
-    const hasKey = !!rawKey;
-    
-    let firestoreTest = 'UNTRIED';
-    let errorMessage = null;
-
-    if (serviceEmail && hasKey) {
-      try {
-        const db = getFirebaseAdmin();
-        if (db) {
-          // Attempt a simple read to check permissions
-          await db.collection('config').doc('main').get();
-          firestoreTest = 'SUCCESS';
-        } else {
-          firestoreTest = 'FAILED_TO_INIT';
-        }
-      } catch (err: any) {
-        firestoreTest = 'FAILED';
-        errorMessage = err.message;
-        console.error('[Debug] Firestore connectivity test failed:', err);
-      }
+    try {
+      const diagnostics = await getFirestoreDiagnostics();
+      res.json(diagnostics);
+    } catch (error: any) {
+      res.status(500).json({ status: 'error', message: error.message });
     }
-
-    res.json({
-      status: 'diagnostic',
-      checks: {
-        firebaseConfigExists: !!firebaseConfig,
-        projectId: firebaseConfig.projectId,
-        databaseId: firebaseConfig.firestoreDatabaseId,
-        serviceAccountEmail: serviceEmail || 'MISSING',
-        serviceAccountKey: hasKey ? 'PRESENT' : 'MISSING',
-        sheetConfigured: config.isConfigured,
-        firestoreConnection: firestoreTest,
-        error: errorMessage
-      },
-      instructions: !serviceEmail ? [
-        "1. Create a Service Account in Google Cloud Console.",
-        "2. Add the email to GOOGLE_SERVICE_ACCOUNT_EMAIL secret.",
-        "3. Add the private key to GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY secret.",
-        "4. Share your Google Sheet with the Service Account email."
-      ] : (firestoreTest === 'FAILED' ? [
-        "1. Ensure the Service Account has 'Firebase Editor' role in GCP Console.",
-        "2. Ensure the PRIVATE_KEY includes the full string starting with '-----BEGIN PRIVATE KEY-----'.",
-        "3. Verify that the Project ID in your secret matches: " + firebaseConfig.projectId
-      ] : [
-        "1. Ensure the Service Account email is shared to your Google Sheet as Editor.",
-        "2. If search fails, check if the spreadsheet tab name is exactly 'Students'."
-      ])
-    });
   });
 
   // Fetch student list
@@ -180,6 +145,18 @@ async function startServer() {
   app.post('/api/students/bulk', async (req, res) => {
     try {
       await bulkUpdateStudents(req.body.students);
+      
+      // Trigger immediate sync to Firestore so UI updates fast
+      try {
+        const students = await fetchStudentsFromSheet();
+        if (students) {
+          await syncSheetsToFirestore(students);
+          console.log(`[Sync] Immediate post-bulk sync successful for ${students.length} students.`);
+        }
+      } catch (syncErr) {
+        console.warn('[Sync] Immediate post-bulk sync failed:', syncErr);
+      }
+
       res.json({ status: 'success', message: `${req.body.students.length} students synchronized to Google Sheets!` });
     } catch (error: any) {
       res.status(500).json({ status: 'error', message: error.message });
@@ -223,7 +200,9 @@ async function startServer() {
         console.error('[Sync] Background sync failed:', error);
       }
     };
-    runSync();
+    
+    // Delay first sync slightly to give priority to initial UI fetch
+    setTimeout(runSync, 5000);
     setInterval(runSync, 10 * 60 * 1000);
   });
 }

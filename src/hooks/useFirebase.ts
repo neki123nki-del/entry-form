@@ -40,7 +40,7 @@ export function useFirebase() {
     };
   }, []);
 
-  const refetchStudents = async () => {
+  const refetchStudents = async (retryCount = 3): Promise<Student[] | null> => {
     try {
       const res = await fetch('/api/students');
       if (res.ok) {
@@ -50,7 +50,13 @@ export function useFirebase() {
           return data;
         }
       }
+      throw new Error(`Server status: ${res.status}`);
     } catch (e) {
+      if (retryCount > 0) {
+        console.warn(`[Sync] Student fetch failed, retrying in 1s... (${retryCount} left)`);
+        await new Promise(r => setTimeout(r, 1000));
+        return refetchStudents(retryCount - 1);
+      }
       console.error('Manual refetch failed:', e);
     }
     return null;

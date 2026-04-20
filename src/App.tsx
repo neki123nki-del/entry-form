@@ -62,6 +62,7 @@ export default function App() {
   const [massRollNos, setMassRollNos] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [dismissDiagnostic, setDismissDiagnostic] = useState(false);
   const [hasCamera, setHasCamera] = useState<boolean>(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -153,13 +154,21 @@ export default function App() {
     }
   };
 
-  const checkDiagnostics = async () => {
+  const checkDiagnostics = async (retryCount = 2) => {
     try {
       const res = await fetch('/api/debug/permissions');
-      const data = await res.json();
-      setDiagnostics(data);
+      if (res.ok) {
+        const data = await res.json();
+        setDiagnostics(data);
+      } else {
+        throw new Error(`Status ${res.status}`);
+      }
     } catch (e) {
-      console.error('Failed to run diagnostics');
+      if (retryCount > 0) {
+        setTimeout(() => checkDiagnostics(retryCount - 1), 2000);
+      } else {
+        console.error('Failed to run diagnostics');
+      }
     }
   };
 
@@ -286,8 +295,6 @@ export default function App() {
     setSaveStatus(null);
 
     try {
-      const ggenAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-      
       const reader = new FileReader();
       const base64Promise = new Promise<string>((resolve) => {
         reader.onload = () => resolve((reader.result as string).split(',')[1]);
@@ -295,39 +302,19 @@ export default function App() {
       });
       const base64Data = await base64Promise;
 
-      const response = await ggenAI.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: {
-          parts: [
-            { inlineData: { data: base64Data, mimeType: file.type } },
-            { text: 'Extract student details from this list image.\n\n' +
-                    'RULES:\n' +
-                    '1. Find the "Student Symbol" (e.g., "Tha-081-Bar-001" or "081-BAR-001").\n' +
-                    '2. Extract the last 3 digits after the final hyphen (e.g., "001") as the "rollNo". If no hyphen, take the last 3 digits.\n' +
-                    '3. Use the full "Student Symbol" as the "id".\n' +
-                    '4. Extract "Name", "Faculty", and "Batch".' }
-          ]
-        },
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                id: { type: Type.STRING },
-                rollNo: { type: Type.STRING },
-                name: { type: Type.STRING },
-                faculty: { type: Type.STRING },
-                batch: { type: Type.STRING }
-              },
-              required: ['id', 'rollNo', 'name', 'faculty', 'batch']
-            }
-          }
-        }
+      // Call Backend AI Bridge
+      const scanRes = await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64Data, mimeType: file.type })
       });
 
-      const extractedStudents = JSON.parse(response.text);
+      if (!scanRes.ok) {
+        const errData = await scanRes.json().catch(() => ({}));
+        throw new Error(errData.message || 'AI Scan failed on server');
+      }
+
+      const extractedStudents = await scanRes.json();
       
       const syncRes = await fetch('/api/students/bulk', {
         method: 'POST',
@@ -337,7 +324,8 @@ export default function App() {
 
       if (syncRes.ok) {
         setSaveStatus({ type: 'success', message: 'AI Scan complete! Data syncing...' });
-        // The real-time listener will pick up the new students soon
+        // Manually refetch to update UI instantly even if Firestore listener is slow
+        refetchStudents();
       } else {
         throw new Error('Failed to update sheets');
       }
@@ -444,13 +432,19 @@ export default function App() {
 
       <main className="max-w-md mx-auto px-6 pt-6 space-y-6">
         {/* Permission Diagnostics Alert */}
-        {diagnostics && (diagnostics.checks.serviceAccountEmail === 'MISSING' || diagnostics.checks.serviceAccountKey === 'MISSING') && (
+        {diagnostics && !dismissDiagnostic && (diagnostics.checks.serviceAccountEmail === 'MISSING' || diagnostics.checks.firestoreConnection === 'FAILED') && (
           <motion.div 
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-amber-50 border border-amber-200 rounded-2xl p-5 space-y-3"
+            className="bg-amber-50 border border-amber-200 rounded-2xl p-5 space-y-3 relative"
           >
-            <div className="flex items-center gap-2 text-amber-700">
+            <button 
+              onClick={() => setDismissDiagnostic(true)}
+              className="absolute top-4 right-4 p-1 text-amber-400 hover:text-amber-600 rounded-lg hover:bg-amber-100 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-2 text-amber-700 pr-8">
               <AlertCircle className="w-5 h-5" />
               <h3 className="font-bold text-sm">Database Sync (Optional) Delayed</h3>
             </div>
@@ -461,7 +455,18 @@ export default function App() {
             <div className="bg-white/50 rounded-xl p-3 space-y-2 border border-amber-100">
               <p className="text-[10px] font-bold text-amber-800 uppercase tracking-wider underline">Steps to fix Database Backup:</p>
               
-              {diagnostics.checks.firestoreConnection === 'FAILED' && (
+              {diagnostics.checks.projectMismatch && (
+                <div className="bg-red-50 border border-red-200 p-2 rounded-lg mb-2">
+                  <p className="text-[10px] text-red-800 font-bold flex items-center gap-1">
+                    <XCircle className="w-3 h-3" /> Project ID Mismatch
+                  </p>
+                  <p className="text-[9px] text-red-700 leading-tight mt-1">
+                    Your service account belongs to a different Google Cloud project. It must belong to <b>{diagnostics.checks.projectId}</b>.
+                  </p>
+                </div>
+              )}
+
+              {diagnostics.checks.firestoreConnection === 'FAILED' && !diagnostics.checks.projectMismatch && (
                 <div className="bg-amber-100 p-2 rounded-lg mb-2">
                   <p className="text-[10px] text-amber-800 font-bold">Database Test Failed:</p>
                   <p className="text-[9px] text-amber-700 italic">{diagnostics.checks.error || 'Missing Permission'}</p>
@@ -470,7 +475,24 @@ export default function App() {
 
               <ul className="text-[10px] text-red-700 list-disc list-inside space-y-1">
                 {diagnostics.instructions.map((step: string, i: number) => (
-                  <li key={i}>{step}</li>
+                  <li key={i}>
+                    {step.includes('https://') ? (
+                      <>
+                        {step.split('https://')[0]}
+                        <a 
+                          href={'https://' + step.split('https://')[1].split(' ')[0]} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          className="text-blue-600 underline font-bold"
+                        >
+                          Console Link
+                        </a>
+                        {' ' + (step.split('https://')[1].split(' ').slice(1).join(' ') || '')}
+                      </>
+                    ) : (
+                      step
+                    )}
+                  </li>
                 ))}
               </ul>
               <button 
@@ -479,6 +501,50 @@ export default function App() {
               >
                 <RefreshCw className="w-3 h-3" /> Re-Check Connection
               </button>
+
+              <div className="pt-2 mt-2 border-t border-amber-100">
+                <details className="cursor-pointer group">
+                  <summary className="text-[9px] font-bold text-amber-500 uppercase tracking-widest flex items-center gap-1 group-open:mb-2">
+                    <ChevronDown className="w-3 h-3 transition-transform group-open:rotate-180" /> Technical Inspection
+                  </summary>
+                  <div className="bg-slate-900 rounded-lg p-3 font-mono text-[8px] text-slate-300 space-y-1.5 overflow-x-auto">
+                    <div className="flex justify-between border-b border-white/5 pb-1">
+                      <span className="text-slate-500 italic">Project ID:</span>
+                      <span className="text-blue-400">{diagnostics.checks.projectId}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-white/5 pb-1">
+                      <span className="text-slate-500 italic">Database ID:</span>
+                      <span className="text-blue-400">{diagnostics.checks.databaseId || '(default)'}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-white/5 pb-1 items-center">
+                      <span className="text-slate-500 italic">Service Acc:</span>
+                      <div className="flex items-center gap-2 max-w-[150px]">
+                        <span className="text-amber-400 truncate text-right flex-1" title={diagnostics.checks.serviceAccountEmail}>
+                          {diagnostics.checks.serviceAccountEmail}
+                        </span>
+                        <button 
+                          onClick={() => {
+                            navigator.clipboard.writeText(diagnostics.checks.serviceAccountEmail);
+                            alert('Email copied to clipboard!');
+                          }}
+                          className="p-1 hover:bg-white/10 rounded transition-colors"
+                        >
+                          <RefreshCw className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 italic">Connection:</span>
+                      <span className={cn(
+                        "font-bold",
+                        diagnostics.checks.firestoreConnection === 'SUCCESS' ? "text-green-400" : "text-red-400"
+                      )}>
+                        {diagnostics.checks.firestoreConnection}
+                      </span>
+                    </div>
+                  </div>
+                </details>
+              </div>
             </div>
             <p className="text-[9px] text-red-400 italic">This is required for the server to securely communicate between Sheets and Firestore.</p>
           </motion.div>
