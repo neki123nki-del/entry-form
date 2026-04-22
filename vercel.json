@@ -5,5 +5,10 @@
       "source": "/api/(.*)",
       "destination": "/api"
     }
-  ]
+  ],
+  "functions": {
+    "api/**/*.ts": {
+      "includeFiles": "firebase-applet-config.json"
+    }
+  }
 }

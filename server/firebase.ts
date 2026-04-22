@@ -2,7 +2,9 @@ import admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 import path from 'path';
 import fs from 'fs';
-import firebaseConfig from '../firebase-applet-config.json';
+
+const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
 let db: any = null;
 let initializationPromise: Promise<any> | null = null;

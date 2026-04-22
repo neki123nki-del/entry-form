@@ -1,7 +1,10 @@
 import express from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import fs from 'fs';
+
+const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
 // Import our "Backend Bridge" modules
 import { 
@@ -17,21 +20,9 @@ import {
   saveAttendanceToFirestore,
   getFirestoreDiagnostics
 } from './server/firebase.js';
-import firebaseConfig from './firebase-applet-config.json';
 import admin from 'firebase-admin';
 
 dotenv.config();
-
-// Critical Error Handling
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('[Server] Unhandled Rejection at:', promise, 'reason:', reason);
-});
-process.on('uncaughtException', (err) => {
-  console.error('[Server] Uncaught Exception:', err);
-});
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const mockStudents = [
   { id: 'S001', rollNo: '101', name: 'John Doe', faculty: 'Engineering', batch: '2024' },
@@ -87,8 +78,13 @@ app.post('/api/sync', async (req, res) => {
 
   // Fetch student list
   app.get('/api/students', async (req, res) => {
-    const students = await fetchStudentsFromSheet();
-    res.json(students || mockStudents);
+    try {
+      const students = await fetchStudentsFromSheet();
+      res.json(students || mockStudents);
+    } catch (error: any) {
+      console.error('Error fetching students:', error);
+      res.status(500).json({ status: 'error', message: error.message });
+    }
   });
 
   // Save single attendance
