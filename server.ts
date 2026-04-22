@@ -1,5 +1,4 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
@@ -41,28 +40,26 @@ const mockStudents = [
   { id: 'S004', rollNo: '202', name: 'Bob Wilson', faculty: 'Business', batch: '2023' },
 ];
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+export const app = express();
 
-  app.use(express.json({ limit: '50mb' })); // Increased limit for image uploads
+app.use(express.json({ limit: '50mb' })); // Increased limit for image uploads
 
-  // --- API Routes (The Bridge) ---
+// --- API Routes (The Bridge) ---
 
-  // Sync endpoint (also called periodically)
-  app.post('/api/sync', async (req, res) => {
-    try {
-      const students = await fetchStudentsFromSheet();
-      if (students) {
-        await syncSheetsToFirestore(students);
-        res.json({ status: 'success', message: 'Synced Sheets to Firestore' });
-      } else {
-        res.status(404).json({ status: 'error', message: 'No students found in Sheets' });
-      }
-    } catch (error: any) {
-      res.status(500).json({ status: 'error', message: error.message });
+// Sync endpoint (also called periodically)
+app.post('/api/sync', async (req, res) => {
+  try {
+    const students = await fetchStudentsFromSheet();
+    if (students) {
+      await syncSheetsToFirestore(students);
+      res.json({ status: 'success', message: 'Synced Sheets to Firestore' });
+    } else {
+      res.status(404).json({ status: 'error', message: 'No students found in Sheets' });
     }
-  });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
 
   // Health check
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
@@ -174,48 +171,54 @@ async function startServer() {
     }
   });
 
-  // --- Vite & Production Setup ---
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
+// --- Vercel Export OR Local Server Start ---
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Backend Bridge running on http://localhost:${PORT}`);
+if (!process.env.VERCEL) {
+  // We only run this full server setup locally or on Cloud Run, NOT on Vercel Serverless
+  const startServer = async () => {
+    const PORT = parseInt(process.env.PORT || '3000', 10);
     
-    const serviceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    if (serviceEmail) {
-      console.log(`[Google Cloud] Service Account active: ${serviceEmail}`);
-      console.log(`[Google Cloud] IMPORTANT: Ensure this email has "Editor" access to your Spreadsheet.`);
+    // --- Vite & Production Setup ---
+    if (process.env.NODE_ENV !== 'production') {
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } else {
+      const distPath = path.join(process.cwd(), 'dist');
+      app.use(express.static(distPath));
+      app.get('*', (req, res) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+      });
     }
-    
-    // Initial sync and then every 10 minutes
-    const runSync = async () => {
-      try {
-        console.log('[Sync] Starting Sheets -> Firestore background sync...');
-        const students = await fetchStudentsFromSheet();
-        if (students) {
-          await syncSheetsToFirestore(students);
-          console.log(`[Sync] Successfully synced ${students.length} students.`);
-        }
-      } catch (error) {
-        console.error('[Sync] Background sync failed:', error);
-      }
-    };
-    
-    // Delay first sync slightly to give priority to initial UI fetch
-    setTimeout(runSync, 5000);
-    setInterval(runSync, 10 * 60 * 1000);
-  });
-}
 
-startServer();
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Backend Bridge running on http://localhost:${PORT}`);
+      
+      const serviceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+      if (serviceEmail) {
+        console.log(`[Google Cloud] Service Account active: ${serviceEmail}`);
+      }
+      
+      // Initial sync and then every 10 minutes
+      const runSync = async () => {
+        try {
+          console.log('[Sync] Starting Sheets -> Firestore background sync...');
+          const students = await fetchStudentsFromSheet();
+          if (students) {
+            await syncSheetsToFirestore(students);
+          }
+        } catch (error) {
+          console.error('[Sync] Background sync failed:', error);
+        }
+      };
+      
+      setTimeout(runSync, 5000);
+      setInterval(runSync, 10 * 60 * 1000);
+    });
+  };
+
+  startServer();
+}
