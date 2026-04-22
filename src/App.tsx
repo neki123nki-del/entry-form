@@ -202,16 +202,30 @@ export default function App() {
 
     try {
       // Save local to Firestore for instant multi-device sync
-      await addDoc(collection(db, 'attendance'), record);
+      try {
+        await addDoc(collection(db, 'attendance'), record);
+      } catch (e) {
+        console.warn('Local Firestore save failed:', e);
+      }
 
       // Also bridge to Google Sheets via server
-      await fetch('/api/attendance', {
+      const res = await fetch('/api/attendance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(record)
       });
 
-      setSaveStatus({ type: 'success', message: 'Attendance saved and synced!' });
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.message || 'Failed to save to Google Sheets');
+      }
+
+      if (data.message && data.message.includes('Demo Mode')) {
+        throw new Error('Google Sheets is disconnected. Please check diagnostic configuration.');
+      }
+
+      setSaveStatus({ type: 'success', message: 'Attendance saved and synced to Google Sheets!' });
       // Reset form
       setSearchRollNo('');
       setSelectedStudent(null);
@@ -376,19 +390,29 @@ export default function App() {
 
     try {
       // Parallel sync to Firestore and Sheets
-      const firestorePromises = records.map(r => addDoc(collection(db, 'attendance'), r));
-      const sheetsPromise = fetch('/api/attendance/bulk', {
+      // We catch firestore promises so they don't break the main sheet operation if offline/denied
+      records.map(r => addDoc(collection(db, 'attendance'), r).catch(e => console.warn('Local save failed', e)));
+      
+      const sheetsResponse = await fetch('/api/attendance/bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ records })
       });
 
-      await Promise.all([...firestorePromises, sheetsPromise]);
+      const data = await sheetsResponse.json();
 
-      setSaveStatus({ type: 'success', message: `${records.length} marks synced locally and to Sheets!` });
+      if (!sheetsResponse.ok) {
+        throw new Error(data.message || 'Mass sync to Google Sheets failed.');
+      }
+
+      if (data.message && data.message.includes('Demo Mode')) {
+        throw new Error('Google Sheets is disconnected. Please check diagnostic configuration.');
+      }
+
+      setSaveStatus({ type: 'success', message: `${records.length} marks synced to Google Sheets!` });
       setMassRollNos('');
-    } catch (err) {
-      setSaveStatus({ type: 'error', message: 'Sync failed' });
+    } catch (err: any) {
+      setSaveStatus({ type: 'error', message: err.message || 'Sync failed' });
     } finally {
       setSaving(false);
     }
